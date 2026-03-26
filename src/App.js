@@ -215,10 +215,11 @@ function useStore() {
   const addRecord     = (pid,r) => save(patients.map(p => p.id===pid ? {...p,records:[...(p.records||[]),{...r,ts:new Date().toISOString(),rid:Date.now().toString()}]} : p));
   const deleteRecord  = (pid,rid) => save(patients.map(p => p.id===pid ? {...p,records:(p.records||[]).filter(r=>r.rid!==rid)} : p));
   const addVisit      = (pid,v) => save(patients.map(p => p.id===pid ? {...p,visits:[...(p.visits||[]),{...v,ts:new Date().toISOString(),vid:Date.now().toString()}]} : p));
-  const searchPhone   = (q,cid) => patients.filter(p => p.phone.includes(q) && (!cid||p.clinicId===cid));
-  const searchCode    = (q,cid) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
-  const searchName    = (q,cid) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
-  return { patients, addPatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName };
+  const searchPhone      = (q,cid) => patients.filter(p => p.phone.includes(q) && (!cid||p.clinicId===cid));
+  const searchCode       = (q,cid) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
+  const searchName       = (q,cid) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
+  const findByPhoneGlobal = (phone) => patients.filter(p => p.phone === phone.trim());
+  return { patients, addPatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName, findByPhoneGlobal };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -608,12 +609,23 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
   const [q,setQ]     = useState("");
   const [type,setType] = useState("phone");
   const [res,setRes]   = useState(null);
+  const [inlineLog, setInlineLog] = useState({}); // pid -> note text
+  const [logDone, setLogDone]     = useState({}); // pid -> bool
 
   const run = () => {
     if (!q.trim()) return;
     const cid = isMIS ? null : clinicId;
     const r = type==="phone" ? store.searchPhone(q.trim(),cid) : type==="code" ? store.searchCode(q.trim(),cid) : store.searchName(q.trim(),cid);
     setRes(r);
+    setInlineLog({}); setLogDone({});
+  };
+
+  const submitLog = (pid) => {
+    const note = (inlineLog[pid]||"").trim();
+    if(!note) return;
+    store.addVisit(pid, {note});
+    setLogDone(x=>({...x,[pid]:true}));
+    setInlineLog(x=>({...x,[pid]:""}));
   };
 
   return (
@@ -637,7 +649,46 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
           <div style={{marginTop:16}}>
             {res===null && <div style={{color:"var(--muted2)",fontSize:12,textAlign:"center",padding:18}}>Enter a query above and press Search or Enter</div>}
             {res?.length===0 && <Empty msg="No patients found"/>}
-            {res?.map(p=><PRow key={p.id} p={p} onClick={()=>onSelect(p)}/>)}
+            {res?.map(p=>{
+              const c = CLINICS[p.clinicId];
+              const acl = c?.color||"#7c3aed";
+              return (
+                <div key={p.id} style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:12,marginBottom:10,overflow:"hidden"}}>
+                  {/* Patient row — clickable to open full modal */}
+                  <div className="row-hover" onClick={()=>onSelect(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer"}}>
+                    <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${acl},${acl}cc)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>
+                      {p.name?.[0]?.toUpperCase()}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,color:"var(--text1)",fontSize:13}}>{p.name}</div>
+                      <div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>📱 {p.phone} · {c?.label} · {c?.city}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <Cb code={p.id} color={acl}/>
+                      <div style={{fontSize:9,color:"var(--muted2)",marginTop:3}}>{p.records?.length||0} records · {p.visits?.length||0} visits</div>
+                    </div>
+                  </div>
+                  {/* Inline visit log — only for clinic users (not read-only MIS) */}
+                  {!isMIS && (
+                    <div style={{borderTop:"1px solid var(--border)",padding:"10px 14px",background:"var(--card)"}}>
+                      <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:0.8,textTransform:"uppercase",marginBottom:7}}>📝 Log Today's Visit</div>
+                      {logDone[p.id] ? (
+                        <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"7px 12px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged!</div>
+                      ) : (
+                        <div style={{display:"flex",gap:8}}>
+                          <textarea style={{...S.inp,flex:1,minHeight:42,resize:"vertical",fontSize:12}} placeholder="Note for this visit…"
+                            value={inlineLog[p.id]||""} onChange={e=>setInlineLog(x=>({...x,[p.id]:e.target.value}))}/>
+                          <button className="btn-p" onClick={()=>submitLog(p.id)}
+                            style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`,alignSelf:"flex-end",fontSize:11,padding:"8px 14px",whiteSpace:"nowrap"}}>
+                            + Log
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -648,13 +699,22 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
 // ══════════════════════════════════════════════════════════
 // ADD PATIENT
 // ══════════════════════════════════════════════════════════
-function AddPatient({ user, store, onDone, onCancel }) {
+function AddPatient({ user, store, onDone, onCancel, onSearch }) {
   const [f,setF]   = useState({name:"",phone:"",age:"",gender:"Male",address:"",bloodGroup:"",notes:""});
   const [errs,setErrs] = useState({});
   const [success,setSuccess] = useState(null);
-  const set = (k,v) => setF(x=>({...x,[k]:v}));
+  const [dupPatient,setDupPatient] = useState(null);  // existing patient with same phone
+  const [dupNote,setDupNote] = useState("");
+  const [dupLogDone,setDupLogDone] = useState(false);
+  const set = (k,v) => { setF(x=>({...x,[k]:v})); if(k==="phone") setDupPatient(null); };
   const validate = () => { const e={}; if(!f.name.trim())e.name="Required"; if(!/^\d{10}$/.test(f.phone))e.phone="Must be 10 digits"; if(!f.age||isNaN(f.age))e.age="Required"; return e; };
-  const submit = () => { const e=validate(); if(Object.keys(e).length){setErrs(e);return;} setSuccess(store.addPatient({...f,clinicId:user.clinic})); };
+  const submit = () => {
+    const e=validate(); if(Object.keys(e).length){setErrs(e);return;}
+    // Cross-clinic duplicate check
+    const existing = store.findByPhoneGlobal(f.phone);
+    if(existing.length>0){ setDupPatient(existing[0]); return; }
+    setSuccess(store.addPatient({...f,clinicId:user.clinic}));
+  };
   const acl = CLINICS[user.clinic]?.color||"#7c3aed";
 
   if (success) return (
@@ -677,6 +737,51 @@ function AddPatient({ user, store, onDone, onCancel }) {
     <div>
       <TopBar title="Register New Patient" sub={user.clinicLabel}/>
       <div className="main-pad" style={{padding:"22px 26px",maxWidth:660}}>
+
+        {/* ── DUPLICATE PHONE BANNER ── */}
+        {dupPatient && (
+          <div className="fadeUp" style={{background:"#fff7ed",border:"2px solid #fb923c",borderRadius:14,padding:"18px 20px",marginBottom:18}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+              <div style={{fontSize:22}}>⚠️</div>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:"#c2410c"}}>Entry already exists for this number</div>
+                <div style={{fontSize:12,color:"#9a3412",marginTop:2}}>A patient with mobile <strong>{dupPatient.phone}</strong> was registered at <strong>{CLINICS[dupPatient.clinicId]?.label}</strong> ({CLINICS[dupPatient.clinicId]?.city}).</div>
+              </div>
+            </div>
+            {/* Existing patient card */}
+            <div style={{background:"var(--card)",border:"1px solid #fed7aa",borderRadius:10,padding:"12px 15px",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <div style={{width:38,height:38,borderRadius:10,background:`linear-gradient(135deg,${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"},${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"}cc)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:15}}>
+                  {dupPatient.name?.[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:"var(--text1)"}}>{dupPatient.name}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>📱 {dupPatient.phone} · <Cb code={dupPatient.id} color={CLINICS[dupPatient.clinicId]?.color}/> · {CLINICS[dupPatient.clinicId]?.label}</div>
+                </div>
+              </div>
+              <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>{dupPatient.records?.length||0} records · {dupPatient.visits?.length||0} visits · Registered {new Date(dupPatient.createdAt).toLocaleDateString("en-IN")}</div>
+              {/* Inline visit log */}
+              {!dupLogDone ? (
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:"var(--text2)",marginBottom:6}}>📝 Add a Visit Log for Today's Visit</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
+                    <button className="btn-p" onClick={()=>{if(!dupNote.trim())return;store.addVisit(dupPatient.id,{note:dupNote});setDupNote("");setDupLogDone(true);}}
+                      style={{...S.btn,background:`linear-gradient(135deg,${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"},${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"}cc)`,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>
+                      + Log Visit
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"9px 13px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged successfully!</div>
+              )}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setDupPatient(null);}} style={S.btnG}>← Go Back to Form</button>
+            </div>
+          </div>
+        )}
+
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"26px",boxShadow:"var(--cardshadow)"}}>
           <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 18px"}}>
             {[{k:"name",l:"Full Name *",t:"text",ph:"Patient's full name"},{k:"phone",l:"Mobile Number *",t:"tel",ph:"10-digit mobile"},{k:"age",l:"Age *",t:"number",ph:"Age in years"},{k:"address",l:"Address",t:"text",ph:"Area / City"}].map(x=>(
@@ -999,17 +1104,21 @@ function Lightbox({ src, name, patient, onClose }) {
 
 // ─── ATOMS ────────────────────────────────────────────────────────────────────
 function SLogo({ white }) {
+  // Real logo colours: soundwave bars are green→orange→red, "Sound" is red, "Life" is grey
+  const barColors = white
+    ? ["#fff","#fff","#fff","#fff","#fff","#fff","#fff","#fff","#fff","#fff"]
+    : ["#4caf50","#66bb6a","#ff9800","#e84c3d","#e84c3d","#e84c3d","#ff9800","#66bb6a","#4caf50","#66bb6a"];
   return (
     <div style={{display:"flex",alignItems:"center",gap:8}}>
       <div style={{display:"flex",alignItems:"center",gap:2}}>
         {[4,9,6,14,8,18,10,15,7,11].map((h,i)=>(
-          <div key={i} style={{width:2.5,height:h,background:white?"#fff":i<4?"#e84c3d":"#3aad5e",borderRadius:99}}/>
+          <div key={i} style={{width:2.5,height:h,background:barColors[i],borderRadius:99}}/>
         ))}
       </div>
       <div>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,lineHeight:1,letterSpacing:-0.3}}>
-          <span style={{color:white?"#a7f3d0":"#3aad5e"}}>Sound</span><span style={{color:white?"#fca5a5":"#e84c3d"}}>Life</span>
-          <sup style={{fontSize:9,color:white?"#fca5a5":"#e84c3d"}}>®</sup>
+          <span style={{color:white?"#ffffff":"#e84c3d"}}>Sound</span><span style={{color:white?"#cccccc":"#888888"}}>Life</span>
+          <sup style={{fontSize:9,color:white?"#cccccc":"#888888"}}>®</sup>
         </div>
         <div style={{fontSize:8,color:white?"#c4b5fd":"var(--muted)",letterSpacing:1.2,textTransform:"uppercase",marginTop:1}}>speech & hearing clinic</div>
       </div>
