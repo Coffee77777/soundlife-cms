@@ -215,6 +215,7 @@ function useStore() {
   const addRecord     = (pid,r) => save(patients.map(p => p.id===pid ? {...p,records:[...(p.records||[]),{...r,ts:new Date().toISOString(),rid:Date.now().toString()}]} : p));
   const deleteRecord  = (pid,rid) => save(patients.map(p => p.id===pid ? {...p,records:(p.records||[]).filter(r=>r.rid!==rid)} : p));
   const addVisit      = (pid,v) => save(patients.map(p => p.id===pid ? {...p,visits:[...(p.visits||[]),{...v,ts:new Date().toISOString(),vid:Date.now().toString()}]} : p));
+  // v should include { note, clinicId } — clinicId stored with each visit for display
   const searchPhone      = (q,cid) => patients.filter(p => p.phone.includes(q) && (!cid||p.clinicId===cid));
   const searchCode       = (q,cid) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
   const searchName       = (q,cid) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
@@ -623,7 +624,7 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
   const submitLog = (pid) => {
     const note = (inlineLog[pid]||"").trim();
     if(!note) return;
-    store.addVisit(pid, {note});
+    store.addVisit(pid, {note, clinicId: store.patients.find(x=>x.id===pid)?.clinicId || clinicId});
     setLogDone(x=>({...x,[pid]:true}));
     setInlineLog(x=>({...x,[pid]:""}));
   };
@@ -766,7 +767,7 @@ function AddPatient({ user, store, onDone, onCancel, onSearch }) {
                   <div style={{fontSize:11,fontWeight:700,color:"var(--text2)",marginBottom:6}}>📝 Add a Visit Log for Today's Visit</div>
                   <div style={{display:"flex",gap:8}}>
                     <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
-                    <button className="btn-p" onClick={()=>{if(!dupNote.trim())return;store.addVisit(dupPatient.id,{note:dupNote});setDupNote("");setDupLogDone(true);}}
+                    <button className="btn-p" onClick={()=>{if(!dupNote.trim())return;store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic});setDupNote("");setDupLogDone(true);}}
                       style={{...S.btn,background:`linear-gradient(135deg,${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"},${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"}cc)`,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>
                       + Log Visit
                     </button>
@@ -788,7 +789,9 @@ function AddPatient({ user, store, onDone, onCancel, onSearch }) {
               <div key={x.k} style={{marginBottom:16}}>
                 <label style={S.label}>{x.l}</label>
                 <input style={{...S.inp,...(errs[x.k]?{borderColor:"var(--danger) !important"}:{})}} type={x.t} placeholder={x.ph}
-                  value={f[x.k]} onChange={e=>{set(x.k,e.target.value);setErrs(r=>({...r,[x.k]:undefined}));}}/>
+                  value={f[x.k]}
+                  onChange={e=>{set(x.k,e.target.value);setErrs(r=>({...r,[x.k]:undefined}));}}
+                  onBlur={x.k==="phone"?e=>{const ph=e.target.value.trim();if(/^\d{10}$/.test(ph)){const ex=store.findByPhoneGlobal(ph);if(ex.length>0)setDupPatient(ex[0]);}}:undefined}/>
                 {errs[x.k] && <div style={{color:"var(--danger)",fontSize:10,marginTop:3}}>{errs[x.k]}</div>}
               </div>
             ))}
@@ -1046,13 +1049,20 @@ function PatientModal({ p, store, onClose, readOnly, setLb }) {
               {!readOnly && (
                 <div style={{display:"flex",gap:8,marginBottom:14}}>
                   <textarea style={{...S.inp,flex:1,minHeight:54,resize:"vertical"}} placeholder="Log visit note…" value={note} onChange={e=>setNote(e.target.value)}/>
-                  <button className="btn-p" onClick={()=>{if(!note.trim())return;store.addVisit(live.id,{note});setNote("");}} style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
+                  <button className="btn-p" onClick={()=>{if(!note.trim())return;store.addVisit(live.id,{note,clinicId:live.clinicId});setNote("");}} style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
                 </div>
               )}
               {(!live.visits||live.visits.length===0) && <Empty msg="No visit logs yet"/>}
               {[...(live.visits||[])].reverse().map(v=>(
                 <div key={v.vid} style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"11px 14px",marginBottom:8}}>
-                  <div style={{fontSize:9,color:"var(--muted2)",marginBottom:5}}>{new Date(v.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5,flexWrap:"wrap",gap:4}}>
+                    <div style={{fontSize:9,color:"var(--muted2)"}}>{new Date(v.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                    {v.clinicId && CLINICS[v.clinicId] && (
+                      <div style={{background:CLINICS[v.clinicId].color+"18",color:CLINICS[v.clinicId].color,padding:"2px 8px",borderRadius:5,fontSize:9,fontWeight:700,letterSpacing:0.4}}>
+                        🏥 {CLINICS[v.clinicId].label} · {CLINICS[v.clinicId].city}
+                      </div>
+                    )}
+                  </div>
                   <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>{v.note}</div>
                 </div>
               ))}
@@ -1104,23 +1114,21 @@ function Lightbox({ src, name, patient, onClose }) {
 
 // ─── ATOMS ────────────────────────────────────────────────────────────────────
 function SLogo({ white }) {
-  // Real logo colours: soundwave bars are green→orange→red, "Sound" is red, "Life" is grey
-  const barColors = white
-    ? ["#fff","#fff","#fff","#fff","#fff","#fff","#fff","#fff","#fff","#fff"]
-    : ["#4caf50","#66bb6a","#ff9800","#e84c3d","#e84c3d","#e84c3d","#ff9800","#66bb6a","#4caf50","#66bb6a"];
+  // Matches real SoundLife logo: green→orange→red soundwave bars, "Sound"=red, "Life"=grey
+  const BAR_COLORS = ["#43a047","#66bb6a","#ffa726","#ef5350","#e53935","#ef5350","#ffa726","#66bb6a","#43a047","#66bb6a"];
   return (
     <div style={{display:"flex",alignItems:"center",gap:8}}>
-      <div style={{display:"flex",alignItems:"center",gap:2}}>
+      <div style={{display:"flex",alignItems:"center",gap:2.5}}>
         {[4,9,6,14,8,18,10,15,7,11].map((h,i)=>(
-          <div key={i} style={{width:2.5,height:h,background:barColors[i],borderRadius:99}}/>
+          <div key={i} style={{width:3,height:h,background:white?"rgba(255,255,255,0.85)":BAR_COLORS[i],borderRadius:99}}/>
         ))}
       </div>
       <div>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,lineHeight:1,letterSpacing:-0.3}}>
-          <span style={{color:white?"#ffffff":"#e84c3d"}}>Sound</span><span style={{color:white?"#cccccc":"#888888"}}>Life</span>
-          <sup style={{fontSize:9,color:white?"#cccccc":"#888888"}}>®</sup>
+          <span style={{color:white?"#fff":"#e53935",fontWeight:700}}>Sound</span><span style={{color:white?"#ddd":"#555555",fontWeight:400}}>Life</span>
+          <sup style={{fontSize:8,color:white?"#bbb":"#777777",verticalAlign:"super"}}>®</sup>
         </div>
-        <div style={{fontSize:8,color:white?"#c4b5fd":"var(--muted)",letterSpacing:1.2,textTransform:"uppercase",marginTop:1}}>speech & hearing clinic</div>
+        <div style={{fontSize:7.5,color:white?"rgba(255,255,255,0.7)":"#888888",letterSpacing:1.4,textTransform:"uppercase",marginTop:2,fontWeight:500}}>speech & hearing clinic</div>
       </div>
     </div>
   );
