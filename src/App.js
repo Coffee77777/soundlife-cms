@@ -15,8 +15,6 @@ import {
    ══════════════════════════════════════════════════════════ */
 
 // ─── FIREBASE CONFIG ─────────────────────────────────────────────────────────
-// Replace every value below with your own from Firebase Console
-// (Project Settings → Your apps → Web app → firebaseConfig)
 const firebaseConfig = {
   apiKey:            "AIzaSyAMMAEo_PygPUZy66a1w542lIpA8hF3mAM",
   authDomain:        "soundlife-cms.firebaseapp.com",
@@ -98,6 +96,7 @@ const QUOTES = [
   { q:"They say music soothes the soul. We make sure you never miss a single note.", a:"— SoundLife Promise" },
 ];
 
+// ─── FIX 1: All clinics use unified purple theme ─────────────────────────────
 const CLINICS = {
   shyamal:      { label:"Shyamal",       city:"Ahmedabad",   region:"Ahmedabad",   color:"#7c3aed" },
   sciencecity:  { label:"Science City",  city:"Ahmedabad",   region:"Ahmedabad",   color:"#6d28d9" },
@@ -110,18 +109,18 @@ const CLINICS = {
   wadaj:        { label:"Wadaj",         city:"Ahmedabad",   region:"Ahmedabad",   color:"#8b5cf6" },
   lalbagh:      { label:"Lalbagh",       city:"Vadodara",    region:"Vadodara",    color:"#7c3aed" },
   alkapuri:     { label:"Alkapuri",      city:"Vadodara",    region:"Vadodara",    color:"#6d28d9" },
-  anand:        { label:"Anand",         city:"Anand",       region:"Gujarat",     color:"#059669" },
-  nadiad:       { label:"Nadiad",        city:"Nadiad",      region:"Gujarat",     color:"#0891b2" },
-  bhuj:         { label:"Bhuj",          city:"Bhuj",        region:"Gujarat",     color:"#b45309" },
-  vapi:         { label:"Vapi",          city:"Vapi",        region:"Gujarat",     color:"#be185d" },
-  rajkot:       { label:"Rajkot",        city:"Rajkot",      region:"Gujarat",     color:"#0369a1" },
-  bharuch:      { label:"Bharuch",       city:"Bharuch",     region:"Gujarat",     color:"#7c3aed" },
-  indiranagar:  { label:"Indiranagar",   city:"Bengaluru",   region:"Karnataka",   color:"#ea580c" },
-  yelahanka:    { label:"Yelahanka",     city:"Bengaluru",   region:"Karnataka",   color:"#16a34a" },
-  juhu:         { label:"Juhu",          city:"Mumbai",      region:"Maharashtra", color:"#0284c7" },
-  versova:      { label:"Versova",       city:"Mumbai",      region:"Maharashtra", color:"#db2777" },
-  dadar:        { label:"Dadar",         city:"Mumbai",      region:"Maharashtra", color:"#059669" },
-  bhubaneswar:  { label:"Bhubaneswar",   city:"Bhubaneswar", region:"Odisha",      color:"#7c3aed" },
+  anand:        { label:"Anand",         city:"Anand",       region:"Gujarat",     color:"#8b5cf6" },
+  nadiad:       { label:"Nadiad",        city:"Nadiad",      region:"Gujarat",     color:"#7c3aed" },
+  bhuj:         { label:"Bhuj",          city:"Bhuj",        region:"Gujarat",     color:"#6d28d9" },
+  vapi:         { label:"Vapi",          city:"Vapi",        region:"Gujarat",     color:"#8b5cf6" },
+  rajkot:       { label:"Rajkot",        city:"Rajkot",      region:"Gujarat",     color:"#7c3aed" },
+  bharuch:      { label:"Bharuch",       city:"Bharuch",     region:"Gujarat",     color:"#6d28d9" },
+  indiranagar:  { label:"Indiranagar",   city:"Bengaluru",   region:"Karnataka",   color:"#8b5cf6" },
+  yelahanka:    { label:"Yelahanka",     city:"Bengaluru",   region:"Karnataka",   color:"#7c3aed" },
+  juhu:         { label:"Juhu",          city:"Mumbai",      region:"Maharashtra", color:"#6d28d9" },
+  versova:      { label:"Versova",       city:"Mumbai",      region:"Maharashtra", color:"#8b5cf6" },
+  dadar:        { label:"Dadar",         city:"Mumbai",      region:"Maharashtra", color:"#7c3aed" },
+  bhubaneswar:  { label:"Bhubaneswar",   city:"Bhubaneswar", region:"Odisha",      color:"#6d28d9" },
 };
 
 const REGIONS = {
@@ -159,6 +158,19 @@ const USERS = {
   "sl-dadar":       { password:"DDR@Sound24!",     role:"clinic", name:"Dadar Staff",        clinic:"dadar",       clinicLabel:"Dadar · Mumbai" },
   "sl-bhubaneswar": { password:"BBS@Sound24!",     role:"clinic", name:"Bhubaneswar Staff",  clinic:"bhubaneswar", clinicLabel:"Bhubaneswar · Odisha" },
 };
+
+// ─── FIX 3: Patient source options ───────────────────────────────────────────
+const SOURCE_OPTIONS = [
+  "Walk-in",
+  "Doctor / Hospital Referral",
+  "Friend / Family Referral",
+  "Google / Online Search",
+  "Social Media",
+  "Camp / Health Drive",
+  "Newspaper / Print Ad",
+  "Existing Patient Referral",
+  "Other",
+];
 
 function genCode(cid) {
   return `${cid.slice(0,3).toUpperCase()}-${Math.floor(100000+Math.random()*900000)}`;
@@ -214,10 +226,11 @@ function useStore() {
     await updateDoc(doc(db, "patients", patient._docId), { visits: arrayUnion(visit) });
   };
 
-  const searchPhone       = (q, cid) => patients.filter(p => p.phone.includes(q) && (!cid||p.clinicId===cid));
-  const searchCode        = (q, cid) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
-  const searchName        = (q, cid) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()) && (!cid||p.clinicId===cid));
-  const findByPhoneGlobal = (phone)  => patients.filter(p => p.phone === phone.trim());
+  // ─── FIX 2: Cross-clinic search — no clinic filter applied ────────────────
+  const searchPhone       = (q) => patients.filter(p => p.phone.includes(q));
+  const searchCode        = (q) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()));
+  const searchName        = (q) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+  const findByPhoneGlobal = (phone) => patients.filter(p => p.phone === phone.trim());
 
   return { patients, loading, addPatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName, findByPhoneGlobal };
 }
@@ -321,7 +334,7 @@ function Login({ onLogin, theme, toggleTheme }) {
 // SHELL
 // ══════════════════════════════════════════════════════════
 function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
-  const acl = user.clinic ? CLINICS[user.clinic]?.color : "#7c3aed";
+  const acl = "#7c3aed"; // FIX 1: Always purple regardless of clinic
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)",color:"var(--text1)",transition:"background 0.3s,color 0.3s"}}>
       <aside className="sidebar-full" style={{width:224,background:"var(--sidebar)",borderRight:"1px solid var(--sideborder)",display:"flex",flexDirection:"column",flexShrink:0,position:"sticky",top:0,height:"100vh",overflow:"auto",boxShadow:"2px 0 12px #7c3aed08",transition:"background 0.3s"}}>
@@ -464,21 +477,22 @@ function Clinic({ user, store, onLogout, theme, toggleTheme }) {
       {tab==="home"&&<ClinicHome user={user} myPts={myPts} onAdd={()=>setTab("add")} onSearch={()=>setTab("search")}/>}
       {tab==="search"&&<SearchView store={store} onSelect={setSel} clinicId={user.clinic}/>}
       {tab==="add"&&<AddPatient user={user} store={store} onDone={()=>setTab("home")} onCancel={()=>setTab("home")}/>}
-      {selected&&<PatientModal p={selected} store={store} onClose={()=>setSel(null)} setLb={setLb}/>}
+      {selected&&<PatientModal p={selected} store={store} onClose={()=>setSel(null)} setLb={setLb} currentClinicId={user.clinic}/>}
       {lightbox&&<Lightbox {...lightbox} onClose={()=>setLb(null)}/>}
     </Shell>
   );
 }
 
 function ClinicHome({ user, myPts, onAdd, onSearch }) {
-  const c=CLINICS[user.clinic]; const acl=c?.color||"#7c3aed";
+  const acl="#7c3aed"; // FIX 1: Always purple
+  const c=CLINICS[user.clinic];
   const totalRec=myPts.reduce((a,p)=>a+(p.records?.length||0),0);
   const today=myPts.filter(p=>new Date(p.createdAt).toDateString()===new Date().toDateString()).length;
   const thisMonth=myPts.filter(p=>{const d=new Date(p.createdAt);const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();}).length;
   const quote=QUOTES[Math.floor(Date.now()/86400000)%QUOTES.length];
   return (
     <div>
-      <TopBar title={user.clinicLabel} sub={`${c?.city} · ${c?.region}`} actions={<button className="btn-p" onClick={onAdd} style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`}}>+ New Patient</button>}/>
+      <TopBar title={user.clinicLabel} sub={`${c?.city} · ${c?.region}`} actions={<button className="btn-p" onClick={onAdd} style={{...S.btn}}>+ New Patient</button>}/>
       <div className="main-pad" style={{padding:"22px 26px"}}>
         <div className="grid-3" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:24}}>
           {[[myPts.length,"Total Patients","👥"],[totalRec,"Records Uploaded","📋"],[today,"Registered Today","📅"],[thisMonth,"This Month","📆"]].map(([v,l,ic],i)=>(
@@ -492,7 +506,7 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
           <button className="card-hover btn-p" onClick={onSearch} style={{background:"var(--card)",border:`2px dashed ${acl}40`,borderRadius:16,padding:"28px 24px",cursor:"pointer",textAlign:"left",boxShadow:"var(--cardshadow)"}}>
             <div style={{fontSize:28,marginBottom:10}}>🔍</div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:"var(--text1)",marginBottom:6}}>Search Patient</div>
-            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5}}>Find any patient by mobile number, case code, or name. Access their full history and records.</div>
+            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5}}>Find any patient by mobile number, case code, or name. Search across all clinics.</div>
           </button>
           <button className="card-hover btn-p" onClick={onAdd} style={{background:`linear-gradient(135deg,${acl}18,${acl}08)`,border:`2px dashed ${acl}50`,borderRadius:16,padding:"28px 24px",cursor:"pointer",textAlign:"left",boxShadow:"var(--cardshadow)"}}>
             <div style={{fontSize:28,marginBottom:10}}>➕</div>
@@ -505,7 +519,7 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             {[["1","New Patient","Click 'Register New Patient'. Fill in name, phone, age. A case code like SHY-123456 is auto-generated."],
               ["2","Upload Records","Search the patient, open their profile, go to 'Records' tab and upload diagnosis images or reports."],
-              ["3","Return Visit","When patient returns, search by their phone number or case code to pull up their full history."],
+              ["3","Return Visit","When patient returns, search by their phone number or case code — works across all clinics."],
               ["4","Log Visits","In the patient profile, use the 'Visits' tab to log notes for each consultation."],
             ].map(([n,t,d])=>(
               <div key={n} style={{background:"var(--accentbg)",borderRadius:10,padding:"12px 14px",border:"1px solid var(--border)"}}>
@@ -529,15 +543,15 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// SEARCH VIEW
+// SEARCH VIEW — FIX 2: Cross-clinic search for all users
 // ══════════════════════════════════════════════════════════
 function SearchView({ store, onSelect, isMIS, clinicId }) {
   const [q,setQ]=useState(""); const [type,setType]=useState("phone"); const [res,setRes]=useState(null);
   const [inlineLog,setInlineLog]=useState({}); const [logDone,setLogDone]=useState({});
   const run=()=>{
     if(!q.trim())return;
-    const cid=isMIS?null:clinicId;
-    const r=type==="phone"?store.searchPhone(q.trim(),cid):type==="code"?store.searchCode(q.trim(),cid):store.searchName(q.trim(),cid);
+    // FIX 2: Always search all clinics — no clinic filter
+    const r=type==="phone"?store.searchPhone(q.trim()):type==="code"?store.searchCode(q.trim()):store.searchName(q.trim());
     setRes(r); setInlineLog({}); setLogDone({});
   };
   const submitLog=async(pid)=>{
@@ -547,7 +561,7 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
   };
   return (
     <div>
-      <TopBar title={isMIS?"Global Search":"Search Patient"} sub={isMIS?"Search across all 24 clinics":"Search within your clinic"}/>
+      <TopBar title={isMIS?"Global Search":"Search Patient"} sub={isMIS?"Search across all 24 clinics":"Search across all clinics — view history, add records & log visits"}/>
       <div className="main-pad" style={{padding:"22px 26px",maxWidth:700}}>
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"22px",boxShadow:"var(--cardshadow)"}}>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
@@ -567,13 +581,13 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
               return (
                 <div key={p.id} style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:12,marginBottom:10,overflow:"hidden"}}>
                   <div className="row-hover" onClick={()=>onSelect(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer"}}>
-                    <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${acl},${acl}cc)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>{p.name?.[0]?.toUpperCase()}</div>
+                    <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>{p.name?.[0]?.toUpperCase()}</div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontWeight:600,color:"var(--text1)",fontSize:13}}>{p.name}</div>
                       <div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>📱 {p.phone} · {c?.label} · {c?.city}</div>
                     </div>
                     <div style={{textAlign:"right",flexShrink:0}}>
-                      <Cb code={p.id} color={acl}/>
+                      <Cb code={p.id} color="#7c3aed"/>
                       <div style={{fontSize:9,color:"var(--muted2)",marginTop:3}}>{p.records?.length||0} records · {p.visits?.length||0} visits</div>
                     </div>
                   </div>
@@ -583,7 +597,7 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
                       {logDone[p.id]?(<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"7px 12px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged!</div>):(
                         <div style={{display:"flex",gap:8}}>
                           <textarea style={{...S.inp,flex:1,minHeight:42,resize:"vertical",fontSize:12}} placeholder="Note for this visit…" value={inlineLog[p.id]||""} onChange={e=>setInlineLog(x=>({...x,[p.id]:e.target.value}))}/>
-                          <button className="btn-p" onClick={()=>submitLog(p.id)} style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`,alignSelf:"flex-end",fontSize:11,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Log</button>
+                          <button className="btn-p" onClick={()=>submitLog(p.id)} style={{...S.btn,alignSelf:"flex-end",fontSize:11,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Log</button>
                         </div>
                       )}
                     </div>
@@ -599,15 +613,15 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// ADD PATIENT
+// ADD PATIENT — FIX 3: Added Source field
 // ══════════════════════════════════════════════════════════
 function AddPatient({ user, store, onDone, onCancel }) {
-  const [f,setF]=useState({name:"",phone:"",age:"",gender:"Male",address:"",bloodGroup:"",notes:""});
+  const [f,setF]=useState({name:"",phone:"",age:"",gender:"Male",address:"",bloodGroup:"",source:"",notes:""});
   const [errs,setErrs]=useState({}); const [success,setSuccess]=useState(null); const [busy,setBusy]=useState(false);
   const [dupPatient,setDupPatient]=useState(null); const [dupNote,setDupNote]=useState(""); const [dupLogDone,setDupLogDone]=useState(false);
   const set=(k,v)=>{setF(x=>({...x,[k]:v}));if(k==="phone")setDupPatient(null);};
   const validate=()=>{const e={};if(!f.name.trim())e.name="Required";if(!/^\d{10}$/.test(f.phone))e.phone="Must be 10 digits";if(!f.age||isNaN(f.age))e.age="Required";return e;};
-  const acl=CLINICS[user.clinic]?.color||"#7c3aed";
+  const acl="#7c3aed"; // FIX 1: Always purple
   const submit=async()=>{
     const e=validate();if(Object.keys(e).length){setErrs(e);return;}
     const existing=store.findByPhoneGlobal(f.phone);if(existing.length>0){setDupPatient(existing[0]);return;}
@@ -622,7 +636,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
         <div style={{fontSize:36,fontWeight:800,color:acl,letterSpacing:5,marginBottom:8,fontFamily:"monospace"}}>{success.id}</div>
         <div style={{color:"var(--muted2)",fontSize:11,marginBottom:28}}>Share this code with the patient for all future visits.</div>
         <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-          <button className="btn-p" onClick={()=>setSuccess(null)} style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`}}>Add Another</button>
+          <button className="btn-p" onClick={()=>setSuccess(null)} style={S.btn}>Add Another</button>
           <button onClick={onDone} style={S.btnG}>Go to Home →</button>
         </div>
       </div>
@@ -643,10 +657,10 @@ function AddPatient({ user, store, onDone, onCancel }) {
             </div>
             <div style={{background:"var(--card)",border:"1px solid #fed7aa",borderRadius:10,padding:"12px 15px",marginBottom:14}}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <div style={{width:38,height:38,borderRadius:10,background:`linear-gradient(135deg,${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"},${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"}cc)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:15}}>{dupPatient.name?.[0]?.toUpperCase()}</div>
+                <div style={{width:38,height:38,borderRadius:10,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:15}}>{dupPatient.name?.[0]?.toUpperCase()}</div>
                 <div>
                   <div style={{fontWeight:700,fontSize:13,color:"var(--text1)"}}>{dupPatient.name}</div>
-                  <div style={{fontSize:11,color:"var(--muted)"}}>📱 {dupPatient.phone} · <Cb code={dupPatient.id} color={CLINICS[dupPatient.clinicId]?.color}/> · {CLINICS[dupPatient.clinicId]?.label}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>📱 {dupPatient.phone} · <Cb code={dupPatient.id} color="#7c3aed"/> · {CLINICS[dupPatient.clinicId]?.label}</div>
                 </div>
               </div>
               <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>{dupPatient.records?.length||0} records · {dupPatient.visits?.length||0} visits · Registered {new Date(dupPatient.createdAt).toLocaleDateString("en-IN")}</div>
@@ -656,7 +670,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
                   <div style={{display:"flex",gap:8}}>
                     <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
                     <button className="btn-p" onClick={async()=>{if(!dupNote.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic});setDupNote("");setDupLogDone(true);}}
-                      style={{...S.btn,background:`linear-gradient(135deg,${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"},${CLINICS[dupPatient.clinicId]?.color||"#7c3aed"}cc)`,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log Visit</button>
+                      style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log Visit</button>
                   </div>
                 </div>
               ):(<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"9px 13px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged successfully!</div>)}
@@ -686,13 +700,21 @@ function AddPatient({ user, store, onDone, onCancel }) {
                 {["A+","A-","B+","B-","O+","O-","AB+","AB-"].map(g=><option key={g}>{g}</option>)}
               </select>
             </div>
+            {/* FIX 3: Source / How did you hear about us */}
+            <div style={{marginBottom:16,gridColumn:"1/-1"}}>
+              <label style={S.label}>📣 Source — How did the patient hear about us?</label>
+              <select style={S.inp} value={f.source} onChange={e=>set("source",e.target.value)}>
+                <option value="">Select source…</option>
+                {SOURCE_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
             <div style={{marginBottom:16,gridColumn:"1/-1"}}>
               <label style={S.label}>Chief Complaint / Initial Notes</label>
               <textarea style={{...S.inp,minHeight:76,resize:"vertical"}} placeholder="Symptoms, presenting complaint…" value={f.notes} onChange={e=>set("notes",e.target.value)}/>
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button className="btn-p" onClick={submit} disabled={busy} style={{...S.btn,background:busy?"var(--border)":`linear-gradient(135deg,${acl},${acl}cc)`,cursor:busy?"not-allowed":"pointer"}}>
+            <button className="btn-p" onClick={submit} disabled={busy} style={{...S.btn,background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",cursor:busy?"not-allowed":"pointer"}}>
               {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Saving…</>:"Register & Generate Code"}
             </button>
             <button onClick={onCancel} style={S.btnG}>Cancel</button>
@@ -776,6 +798,14 @@ function Analytics({ store }) {
   const maxR=Math.max(...regions.map(x=>x.count),1);
   const months=Array.from({length:6},(_,i)=>{const d=new Date();d.setMonth(d.getMonth()-5+i);return{label:d.toLocaleDateString("en-IN",{month:"short"}),count:store.patients.filter(p=>{const pd=new Date(p.createdAt);return pd.getMonth()===d.getMonth()&&pd.getFullYear()===d.getFullYear();}).length};});
   const maxM=Math.max(...months.map(m=>m.count),1);
+
+  // FIX 3: Source breakdown chart for analytics
+  const sourceCounts = SOURCE_OPTIONS.map(s => ({
+    s, count: store.patients.filter(p => p.source === s).length
+  })).filter(x => x.count > 0).sort((a,b) => b.count - a.count);
+  const maxS = Math.max(...sourceCounts.map(x => x.count), 1);
+  const unknown = store.patients.filter(p => !p.source).length;
+
   return (
     <div>
       <TopBar title="Analytics" sub="System-wide statistics"/>
@@ -788,7 +818,7 @@ function Analytics({ store }) {
             </div>
           ))}
         </div>
-        <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
+        <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18,marginBottom:18}}>
           <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"20px",boxShadow:"var(--cardshadow)"}}>
             <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:16}}>Patients by Region</div>
             {regions.map(r=>(
@@ -817,17 +847,34 @@ function Analytics({ store }) {
             {total===0&&<Empty msg="No data yet"/>}
           </div>
         </div>
+        {/* FIX 3: Source breakdown analytics */}
+        <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"20px",boxShadow:"var(--cardshadow)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:16}}>📣 Patient Source Breakdown</div>
+          {sourceCounts.length===0&&unknown===total&&<Empty msg="No source data yet — start collecting when registering patients"/>}
+          {sourceCounts.map(({s,count})=>(
+            <div key={s} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                <span style={{fontSize:12,color:"var(--muted)"}}>{s}</span>
+                <span style={{fontSize:12,fontWeight:700,color:"var(--accent)"}}>{count} <span style={{fontSize:10,color:"var(--muted2)",fontWeight:400}}>({Math.round(count/total*100)}%)</span></span>
+              </div>
+              <div style={{background:"var(--accentbg)",borderRadius:99,height:7}}>
+                <div style={{width:`${(count/maxS)*100}%`,background:"linear-gradient(90deg,#7c3aed,#a78bfa)",height:"100%",borderRadius:99,transition:"width 1s cubic-bezier(.16,1,.3,1)",minWidth:count?4:0}}/>
+              </div>
+            </div>
+          ))}
+          {unknown>0&&<div style={{fontSize:11,color:"var(--muted2)",marginTop:10,paddingTop:10,borderTop:"1px solid var(--border)"}}>⚠️ {unknown} patient{unknown>1?"s":""} without source recorded (registered before this field was added)</div>}
+        </div>
       </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════
-// PATIENT MODAL
+// PATIENT MODAL — FIX 3: Show Source in Patient Info tab
 // ══════════════════════════════════════════════════════════
-function PatientModal({ p, store, onClose, readOnly, setLb }) {
+function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
   const [tab,setTab]=useState("info"); const [note,setNote]=useState(""); const fileRef=useRef(); const [busy,setBusy]=useState(false);
-  const live=store.patients.find(x=>x.id===p.id)||p; const c=CLINICS[live.clinicId]; const acl=c?.color||"#7c3aed";
+  const live=store.patients.find(x=>x.id===p.id)||p; const c=CLINICS[live.clinicId]; const acl="#7c3aed"; // FIX 1: Always purple
   const upload=async(e)=>{
     const files=Array.from(e.target.files);if(!files.length)return;
     setBusy(true);
@@ -839,13 +886,15 @@ function PatientModal({ p, store, onClose, readOnly, setLb }) {
       <div style={{background:"var(--card)",border:`1px solid ${acl}30`,borderRadius:18,width:"100%",maxWidth:720,maxHeight:"92vh",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 32px 80px #00000040"}} onClick={e=>e.stopPropagation()}>
         <div style={{padding:"18px 22px",borderBottom:"1px solid var(--border)",background:"var(--accentbg)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <div style={{width:48,height:48,borderRadius:13,background:`linear-gradient(135deg,${acl},${acl}cc)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:20}}>{live.name?.[0]?.toUpperCase()}</div>
+            <div style={{width:48,height:48,borderRadius:13,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:20}}>{live.name?.[0]?.toUpperCase()}</div>
             <div>
               <div style={{fontFamily:"'DM Serif Display',serif",fontSize:19,color:"var(--text1)"}}>{live.name}</div>
               <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                 <Cb code={live.id} color={acl}/>
                 <span style={{background:acl+"18",color:acl,padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>{c?.label} · {c?.city}</span>
                 {live.bloodGroup&&<span style={{background:"#fee2e2",color:"#dc2626",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>🩸 {live.bloodGroup}</span>}
+                {/* FIX 3: Show source badge in modal header */}
+                {live.source&&<span style={{background:"#ede9fe",color:"#7c3aed",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>📣 {live.source}</span>}
               </div>
             </div>
           </div>
@@ -867,6 +916,13 @@ function PatientModal({ p, store, onClose, readOnly, setLb }) {
                   <div style={{fontSize:13,fontWeight:600,color:"var(--text1)",marginTop:4}}>{v||"—"}</div>
                 </div>
               ))}
+              {/* FIX 3: Source field in patient info grid */}
+              <div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px",borderLeft:"3px solid #7c3aed"}}>
+                <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:4}}>📣 Patient Source</div>
+                <div style={{fontSize:13,fontWeight:600,color:live.source?"var(--accent)":"var(--muted)",marginTop:2}}>
+                  {live.source || <span style={{fontStyle:"italic",fontWeight:400}}>Not recorded</span>}
+                </div>
+              </div>
               {live.notes&&(<div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px"}}>
                 <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:5}}>Initial Notes</div>
                 <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>{live.notes}</div>
@@ -877,7 +933,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb }) {
             <div>
               {!readOnly&&(
                 <div style={{marginBottom:14}}>
-                  <button className="btn-p" onClick={()=>fileRef.current.click()} disabled={busy} style={{...S.btn,background:busy?"var(--border)":`linear-gradient(135deg,${acl},${acl}cc)`,cursor:busy?"not-allowed":"pointer"}}>
+                  <button className="btn-p" onClick={()=>fileRef.current.click()} disabled={busy} style={{...S.btn,background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",cursor:busy?"not-allowed":"pointer"}}>
                     {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Uploading to cloud…</>:"📎 Upload Image / Report"}
                   </button>
                   <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple style={{display:"none"}} onChange={upload}/>
@@ -903,7 +959,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb }) {
               {!readOnly&&(
                 <div style={{display:"flex",gap:8,marginBottom:14}}>
                   <textarea style={{...S.inp,flex:1,minHeight:54,resize:"vertical"}} placeholder="Log visit note…" value={note} onChange={e=>setNote(e.target.value)}/>
-                  <button className="btn-p" onClick={async()=>{if(!note.trim())return;await store.addVisit(live.id,{note,clinicId:live.clinicId});setNote("");}} style={{...S.btn,background:`linear-gradient(135deg,${acl},${acl}cc)`,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
+                  <button className="btn-p" onClick={async()=>{if(!note.trim())return;await store.addVisit(live.id,{note,clinicId:currentClinicId||live.clinicId});setNote("");}} style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
                 </div>
               )}
               {(!live.visits||live.visits.length===0)&&<Empty msg="No visit logs yet"/>}
@@ -976,8 +1032,8 @@ function SLogo({ white }) {
     </div>
   );
 }
-function PRow({p,onClick}){const c=CLINICS[p.clinicId];return(<div className="row-hover" onClick={onClick} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,cursor:"pointer",marginBottom:5,background:"var(--accentbg)",border:"1px solid var(--border)",transition:"background 0.12s"}}><div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${c?.color||"#7c3aed"},${c?.color||"#7c3aed"}cc)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>{p.name?.[0]?.toUpperCase()}</div><div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,color:"var(--text1)",fontSize:13}}>{p.name}</div><div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>📱 {p.phone} · {c?.label} · {c?.city}</div></div><div style={{textAlign:"right",flexShrink:0}}><Cb code={p.id} color={c?.color}/><div style={{fontSize:9,color:"var(--muted2)",marginTop:3}}>{p.records?.length||0} records</div></div></div>);}
-function RCard({r,onView,showClinic}){const c=r.patient?CLINICS[r.patient.clinicId]:null;return(<div className="rec-card" onClick={onView} style={{borderRadius:12,overflow:"hidden",border:"1px solid var(--border)",background:"var(--card)"}}><div style={{position:"relative"}}><img src={r.data} style={{width:"100%",height:130,objectFit:"cover",display:"block"}} alt={r.name}/>{showClinic&&c&&<div style={{position:"absolute",top:7,right:7,background:c.color+"ee",borderRadius:5,padding:"2px 7px",fontSize:9,fontWeight:700,color:"#fff"}}>{c.label}</div>}</div><div style={{padding:"8px 10px"}}>{r.patient&&<div style={{fontSize:11,fontWeight:600,color:"var(--text1)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.patient.name}</div>}<div style={{fontSize:9,color:"var(--muted)",marginTop:2}}>{r.name}</div><div style={{fontSize:9,color:"var(--muted2)",marginTop:1}}>{new Date(r.ts).toLocaleDateString("en-IN")}</div></div></div>);}
+function PRow({p,onClick}){const c=CLINICS[p.clinicId];return(<div className="row-hover" onClick={onClick} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,cursor:"pointer",marginBottom:5,background:"var(--accentbg)",border:"1px solid var(--border)",transition:"background 0.12s"}}><div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>{p.name?.[0]?.toUpperCase()}</div><div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,color:"var(--text1)",fontSize:13}}>{p.name}</div><div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>📱 {p.phone} · {c?.label} · {c?.city}</div></div><div style={{textAlign:"right",flexShrink:0}}><Cb code={p.id} color="#7c3aed"/><div style={{fontSize:9,color:"var(--muted2)",marginTop:3}}>{p.records?.length||0} records</div></div></div>);}
+function RCard({r,onView,showClinic}){const c=r.patient?CLINICS[r.patient.clinicId]:null;return(<div className="rec-card" onClick={onView} style={{borderRadius:12,overflow:"hidden",border:"1px solid var(--border)",background:"var(--card)"}}><div style={{position:"relative"}}><img src={r.data} style={{width:"100%",height:130,objectFit:"cover",display:"block"}} alt={r.name}/>{showClinic&&c&&<div style={{position:"absolute",top:7,right:7,background:"#7c3aedee",borderRadius:5,padding:"2px 7px",fontSize:9,fontWeight:700,color:"#fff"}}>{c.label}</div>}</div><div style={{padding:"8px 10px"}}>{r.patient&&<div style={{fontSize:11,fontWeight:600,color:"var(--text1)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.patient.name}</div>}<div style={{fontSize:9,color:"var(--muted)",marginTop:2}}>{r.name}</div><div style={{fontSize:9,color:"var(--muted2)",marginTop:1}}>{new Date(r.ts).toLocaleDateString("en-IN")}</div></div></div>);}
 function Cb({code,color="#7c3aed"}){return <span style={{background:color+"18",color,padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:0.5,fontFamily:"monospace"}}>{code}</span>;}
 function FBtn({active,onClick,children,color="#7c3aed"}){return(<button onClick={onClick} style={{padding:"5px 11px",borderRadius:6,border:`1px solid ${active?color:"var(--border)"}`,background:active?color+"18":"transparent",color:active?color:"var(--muted)",fontSize:10,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>{children}</button>);}
 function Empty({msg}){return <div style={{color:"var(--muted2)",fontSize:12,textAlign:"center",padding:"22px 0"}}>{msg}</div>;}
