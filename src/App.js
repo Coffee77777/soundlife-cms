@@ -4,14 +4,11 @@ import {
   getFirestore, collection, doc, onSnapshot,
   addDoc, updateDoc, arrayUnion
 } from "firebase/firestore";
-import {
-  getStorage, ref as sRef, uploadBytes, getDownloadURL
-} from "firebase/storage";
 
 /* ══════════════════════════════════════════════════════════
    SOUNDLIFE — Multi-Clinic Patient Management System
    Speech & Hearing Clinic · Internal CMS v3.0
-   Firebase Backend Edition
+   Firebase (Firestore) + Cloudinary (Images) Edition
    ══════════════════════════════════════════════════════════ */
 
 // ─── FIREBASE CONFIG ─────────────────────────────────────────────────────────
@@ -24,9 +21,13 @@ const firebaseConfig = {
   appId:             "1:764492442025:web:c86e985882586db4e93cb8",
 };
 
-const app     = initializeApp(firebaseConfig);
-const db      = getFirestore(app);
-const storage = getStorage(app);
+// ─── CLOUDINARY CONFIG ────────────────────────────────────────────────────────
+const CLOUDINARY_CLOUD_NAME   = "dh8sufa3o";
+const CLOUDINARY_UPLOAD_PRESET = "zavhutrz";
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+// Firebase Storage is no longer imported or used — Cloudinary handles all files
 
 // ─── FONT ─────────────────────────────────────────────────────────────────────
 const fontLink = document.createElement("link");
@@ -96,7 +97,6 @@ const QUOTES = [
   { q:"They say music soothes the soul. We make sure you never miss a single note.", a:"— SoundLife Promise" },
 ];
 
-// ─── FIX 1: All clinics use unified purple theme ─────────────────────────────
 const CLINICS = {
   shyamal:      { label:"Shyamal",       city:"Ahmedabad",   region:"Ahmedabad",   color:"#7c3aed" },
   sciencecity:  { label:"Science City",  city:"Ahmedabad",   region:"Ahmedabad",   color:"#6d28d9" },
@@ -159,7 +159,6 @@ const USERS = {
   "sl-bhubaneswar": { password:"BBS@Sound24!",     role:"clinic", name:"Bhubaneswar Staff",  clinic:"bhubaneswar", clinicLabel:"Bhubaneswar · Odisha" },
 };
 
-// ─── FIX 3: Patient source options ───────────────────────────────────────────
 const SOURCE_OPTIONS = [
   "Walk-in",
   "Doctor / Hospital Referral",
@@ -174,6 +173,24 @@ const SOURCE_OPTIONS = [
 
 function genCode(cid) {
   return `${cid.slice(0,3).toUpperCase()}-${Math.floor(100000+Math.random()*900000)}`;
+}
+
+// ══════════════════════════════════════════════════════════
+// CLOUDINARY UPLOAD HELPER
+// Uploads file → returns secure URL string
+// Firestore stores only the URL — no Firebase Storage used
+// ══════════════════════════════════════════════════════════
+async function uploadToCloudinary(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/upload`,
+    { method: "POST", body: formData }
+  );
+  if (!res.ok) throw new Error("Cloudinary upload failed");
+  const json = await res.json();
+  return json.secure_url; // permanent HTTPS URL saved to Firestore
 }
 
 // ══════════════════════════════════════════════════════════
@@ -200,14 +217,20 @@ function useStore() {
   const addRecord = async (pid, r) => {
     const patient = patients.find(p => p.id === pid);
     if (!patient) return;
+
     let dataUrl = r.data;
     if (r.file) {
-      const path = `records/${patient._docId}/${Date.now()}_${r.file.name}`;
-      const storageRef = sRef(storage, path);
-      await uploadBytes(storageRef, r.file);
-      dataUrl = await getDownloadURL(storageRef);
+      // Upload to Cloudinary → get back a permanent URL
+      dataUrl = await uploadToCloudinary(r.file);
     }
-    const record = { type:r.type, name:r.name, data:dataUrl, ts:new Date().toISOString(), rid:Date.now().toString() };
+
+    const record = {
+      type: r.type,
+      name: r.name,
+      data: dataUrl,       // Cloudinary secure_url stored here
+      ts:   new Date().toISOString(),
+      rid:  Date.now().toString(),
+    };
     await updateDoc(doc(db, "patients", patient._docId), { records: arrayUnion(record) });
   };
 
@@ -217,6 +240,8 @@ function useStore() {
     await updateDoc(doc(db, "patients", patient._docId), {
       records: (patient.records||[]).filter(r => r.rid !== rid)
     });
+    // Note: Cloudinary image remains on their CDN (free tier keeps it).
+    // To also delete from Cloudinary you'd need a signed API call from a backend.
   };
 
   const addVisit = async (pid, v) => {
@@ -226,7 +251,6 @@ function useStore() {
     await updateDoc(doc(db, "patients", patient._docId), { visits: arrayUnion(visit) });
   };
 
-  // ─── FIX 2: Cross-clinic search — no clinic filter applied ────────────────
   const searchPhone       = (q) => patients.filter(p => p.phone.includes(q));
   const searchCode        = (q) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()));
   const searchName        = (q) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
@@ -334,7 +358,7 @@ function Login({ onLogin, theme, toggleTheme }) {
 // SHELL
 // ══════════════════════════════════════════════════════════
 function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
-  const acl = "#7c3aed"; // FIX 1: Always purple regardless of clinic
+  const acl = "#7c3aed";
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)",color:"var(--text1)",transition:"background 0.3s,color 0.3s"}}>
       <aside className="sidebar-full" style={{width:224,background:"var(--sidebar)",borderRight:"1px solid var(--sideborder)",display:"flex",flexDirection:"column",flexShrink:0,position:"sticky",top:0,height:"100vh",overflow:"auto",boxShadow:"2px 0 12px #7c3aed08",transition:"background 0.3s"}}>
@@ -484,7 +508,7 @@ function Clinic({ user, store, onLogout, theme, toggleTheme }) {
 }
 
 function ClinicHome({ user, myPts, onAdd, onSearch }) {
-  const acl="#7c3aed"; // FIX 1: Always purple
+  const acl="#7c3aed";
   const c=CLINICS[user.clinic];
   const totalRec=myPts.reduce((a,p)=>a+(p.records?.length||0),0);
   const today=myPts.filter(p=>new Date(p.createdAt).toDateString()===new Date().toDateString()).length;
@@ -492,7 +516,7 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
   const quote=QUOTES[Math.floor(Date.now()/86400000)%QUOTES.length];
   return (
     <div>
-      <TopBar title={user.clinicLabel} sub={`${c?.city} · ${c?.region}`} actions={<button className="btn-p" onClick={onAdd} style={{...S.btn}}>+ New Patient</button>}/>
+      <TopBar title={user.clinicLabel} sub={`${c?.city} · ${c?.region}`} actions={<button className="btn-p" onClick={onAdd} style={S.btn}>+ New Patient</button>}/>
       <div className="main-pad" style={{padding:"22px 26px"}}>
         <div className="grid-3" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:24}}>
           {[[myPts.length,"Total Patients","👥"],[totalRec,"Records Uploaded","📋"],[today,"Registered Today","📅"],[thisMonth,"This Month","📆"]].map(([v,l,ic],i)=>(
@@ -543,14 +567,13 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// SEARCH VIEW — FIX 2: Cross-clinic search for all users
+// SEARCH VIEW
 // ══════════════════════════════════════════════════════════
 function SearchView({ store, onSelect, isMIS, clinicId }) {
   const [q,setQ]=useState(""); const [type,setType]=useState("phone"); const [res,setRes]=useState(null);
   const [inlineLog,setInlineLog]=useState({}); const [logDone,setLogDone]=useState({});
   const run=()=>{
     if(!q.trim())return;
-    // FIX 2: Always search all clinics — no clinic filter
     const r=type==="phone"?store.searchPhone(q.trim()):type==="code"?store.searchCode(q.trim()):store.searchName(q.trim());
     setRes(r); setInlineLog({}); setLogDone({});
   };
@@ -577,7 +600,7 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
             {res===null&&<div style={{color:"var(--muted2)",fontSize:12,textAlign:"center",padding:18}}>Enter a query above and press Search or Enter</div>}
             {res?.length===0&&<Empty msg="No patients found"/>}
             {res?.map(p=>{
-              const c=CLINICS[p.clinicId]; const acl=c?.color||"#7c3aed";
+              const c=CLINICS[p.clinicId];
               return (
                 <div key={p.id} style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:12,marginBottom:10,overflow:"hidden"}}>
                   <div className="row-hover" onClick={()=>onSelect(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer"}}>
@@ -613,7 +636,7 @@ function SearchView({ store, onSelect, isMIS, clinicId }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// ADD PATIENT — FIX 3: Added Source field
+// ADD PATIENT
 // ══════════════════════════════════════════════════════════
 function AddPatient({ user, store, onDone, onCancel }) {
   const [f,setF]=useState({name:"",phone:"",age:"",gender:"Male",address:"",bloodGroup:"",source:"",notes:""});
@@ -621,7 +644,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
   const [dupPatient,setDupPatient]=useState(null); const [dupNote,setDupNote]=useState(""); const [dupLogDone,setDupLogDone]=useState(false);
   const set=(k,v)=>{setF(x=>({...x,[k]:v}));if(k==="phone")setDupPatient(null);};
   const validate=()=>{const e={};if(!f.name.trim())e.name="Required";if(!/^\d{10}$/.test(f.phone))e.phone="Must be 10 digits";if(!f.age||isNaN(f.age))e.age="Required";return e;};
-  const acl="#7c3aed"; // FIX 1: Always purple
+  const acl="#7c3aed";
   const submit=async()=>{
     const e=validate();if(Object.keys(e).length){setErrs(e);return;}
     const existing=store.findByPhoneGlobal(f.phone);if(existing.length>0){setDupPatient(existing[0]);return;}
@@ -700,7 +723,6 @@ function AddPatient({ user, store, onDone, onCancel }) {
                 {["A+","A-","B+","B-","O+","O-","AB+","AB-"].map(g=><option key={g}>{g}</option>)}
               </select>
             </div>
-            {/* FIX 3: Source / How did you hear about us */}
             <div style={{marginBottom:16,gridColumn:"1/-1"}}>
               <label style={S.label}>📣 Source — How did the patient hear about us?</label>
               <select style={S.inp} value={f.source} onChange={e=>set("source",e.target.value)}>
@@ -798,14 +820,9 @@ function Analytics({ store }) {
   const maxR=Math.max(...regions.map(x=>x.count),1);
   const months=Array.from({length:6},(_,i)=>{const d=new Date();d.setMonth(d.getMonth()-5+i);return{label:d.toLocaleDateString("en-IN",{month:"short"}),count:store.patients.filter(p=>{const pd=new Date(p.createdAt);return pd.getMonth()===d.getMonth()&&pd.getFullYear()===d.getFullYear();}).length};});
   const maxM=Math.max(...months.map(m=>m.count),1);
-
-  // FIX 3: Source breakdown chart for analytics
-  const sourceCounts = SOURCE_OPTIONS.map(s => ({
-    s, count: store.patients.filter(p => p.source === s).length
-  })).filter(x => x.count > 0).sort((a,b) => b.count - a.count);
-  const maxS = Math.max(...sourceCounts.map(x => x.count), 1);
-  const unknown = store.patients.filter(p => !p.source).length;
-
+  const sourceCounts=SOURCE_OPTIONS.map(s=>({s,count:store.patients.filter(p=>p.source===s).length})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count);
+  const maxS=Math.max(...sourceCounts.map(x=>x.count),1);
+  const unknown=store.patients.filter(p=>!p.source).length;
   return (
     <div>
       <TopBar title="Analytics" sub="System-wide statistics"/>
@@ -847,10 +864,9 @@ function Analytics({ store }) {
             {total===0&&<Empty msg="No data yet"/>}
           </div>
         </div>
-        {/* FIX 3: Source breakdown analytics */}
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"20px",boxShadow:"var(--cardshadow)"}}>
           <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:16}}>📣 Patient Source Breakdown</div>
-          {sourceCounts.length===0&&unknown===total&&<Empty msg="No source data yet — start collecting when registering patients"/>}
+          {sourceCounts.length===0&&<Empty msg="No source data yet — start collecting when registering patients"/>}
           {sourceCounts.map(({s,count})=>(
             <div key={s} style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
@@ -862,7 +878,7 @@ function Analytics({ store }) {
               </div>
             </div>
           ))}
-          {unknown>0&&<div style={{fontSize:11,color:"var(--muted2)",marginTop:10,paddingTop:10,borderTop:"1px solid var(--border)"}}>⚠️ {unknown} patient{unknown>1?"s":""} without source recorded (registered before this field was added)</div>}
+          {unknown>0&&<div style={{fontSize:11,color:"var(--muted2)",marginTop:10,paddingTop:10,borderTop:"1px solid var(--border)"}}>⚠️ {unknown} patient{unknown>1?"s":""} without source recorded</div>}
         </div>
       </div>
     </div>
@@ -870,11 +886,11 @@ function Analytics({ store }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// PATIENT MODAL — FIX 3: Show Source in Patient Info tab
+// PATIENT MODAL
 // ══════════════════════════════════════════════════════════
 function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
   const [tab,setTab]=useState("info"); const [note,setNote]=useState(""); const fileRef=useRef(); const [busy,setBusy]=useState(false);
-  const live=store.patients.find(x=>x.id===p.id)||p; const c=CLINICS[live.clinicId]; const acl="#7c3aed"; // FIX 1: Always purple
+  const live=store.patients.find(x=>x.id===p.id)||p; const c=CLINICS[live.clinicId]; const acl="#7c3aed";
   const upload=async(e)=>{
     const files=Array.from(e.target.files);if(!files.length)return;
     setBusy(true);
@@ -893,7 +909,6 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
                 <Cb code={live.id} color={acl}/>
                 <span style={{background:acl+"18",color:acl,padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>{c?.label} · {c?.city}</span>
                 {live.bloodGroup&&<span style={{background:"#fee2e2",color:"#dc2626",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>🩸 {live.bloodGroup}</span>}
-                {/* FIX 3: Show source badge in modal header */}
                 {live.source&&<span style={{background:"#ede9fe",color:"#7c3aed",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>📣 {live.source}</span>}
               </div>
             </div>
@@ -916,11 +931,10 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
                   <div style={{fontSize:13,fontWeight:600,color:"var(--text1)",marginTop:4}}>{v||"—"}</div>
                 </div>
               ))}
-              {/* FIX 3: Source field in patient info grid */}
               <div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px",borderLeft:"3px solid #7c3aed"}}>
                 <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:4}}>📣 Patient Source</div>
                 <div style={{fontSize:13,fontWeight:600,color:live.source?"var(--accent)":"var(--muted)",marginTop:2}}>
-                  {live.source || <span style={{fontStyle:"italic",fontWeight:400}}>Not recorded</span>}
+                  {live.source||<span style={{fontStyle:"italic",fontWeight:400}}>Not recorded</span>}
                 </div>
               </div>
               {live.notes&&(<div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px"}}>
@@ -934,7 +948,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
               {!readOnly&&(
                 <div style={{marginBottom:14}}>
                   <button className="btn-p" onClick={()=>fileRef.current.click()} disabled={busy} style={{...S.btn,background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",cursor:busy?"not-allowed":"pointer"}}>
-                    {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Uploading to cloud…</>:"📎 Upload Image / Report"}
+                    {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Uploading to Cloudinary…</>:"📎 Upload Image / Report"}
                   </button>
                   <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple style={{display:"none"}} onChange={upload}/>
                 </div>
