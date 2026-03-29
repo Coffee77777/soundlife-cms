@@ -2,27 +2,14 @@ import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, doc, onSnapshot,
-  addDoc, updateDoc, arrayUnion, query, orderBy, limit, getDocs,
+  addDoc, updateDoc, arrayUnion, query, orderBy, limit,
   setDoc, getDoc
 } from "firebase/firestore";
 import {
   getAuth, signInWithEmailAndPassword, signOut,
   onAuthStateChanged, createUserWithEmailAndPassword,
-  updatePassword, GoogleAuthProvider, signInWithPopup
+  GoogleAuthProvider, signInWithPopup
 } from "firebase/auth";
-
-import { setDoc, getDoc } from "firebase/firestore";
-
-/* ══════════════════════════════════════════════════════════
-   SOUNDLIFE — Multi-Clinic Patient Management System
-   Speech & Hearing Clinic · Internal CMS v4.0
-   Firebase Auth + Firestore + Cloudinary
-   ══════════════════════════════════════════════════════════
-   SETUP (ONE TIME ONLY):
-   1. Firebase Console → Authentication → Enable Email/Password
-   2. Firebase Console → Firestore → Rules → allow only auth users
-   3. Login as sl-mis → click "First Time Setup" → done forever
-   ══════════════════════════════════════════════════════════ */
 
 const firebaseConfig = {
   apiKey:            "AIzaSyAMMAEo_PygPUZy66a1w542lIpA8hF3mAM",
@@ -106,7 +93,6 @@ const QUOTES = [
   { q:"They say music soothes the soul. We make sure you never miss a single note.", a:"— SoundLife Promise" },
 ];
 
-// ─── FIX: All Gujarat cities under Gujarat region ─────────
 const CLINICS = {
   shyamal:      { label:"Prahladnagar",      city:"Ahmedabad",   region:"Gujarat",     color:"#7c3aed" },
   sciencecity:  { label:"Science City",      city:"Ahmedabad",   region:"Gujarat",     color:"#6d28d9" },
@@ -172,11 +158,6 @@ const USER_META = {
   "sl-khorda":      { email:"khordasoundlife@gmail.com",        role:"clinic", name:"Khorda Staff",          clinic:"khorda",      clinicLabel:"Khorda · Bhubaneswar",       initPwd:"KHR@Sound24!" },
 };
 
-// reverse lookup: email → username
-const EMAIL_TO_META = Object.fromEntries(
-  Object.entries(USER_META).map(([u, m]) => [m.email, { ...m, username: u }])
-);
-
 const SOURCE_OPTIONS = [
   "Walk-in","Doctor / Hospital Referral","Friend / Family Referral",
   "Google / Online Search","Social Media","Camp / Health Drive",
@@ -187,9 +168,6 @@ function genCode(cid) {
   return `${cid.slice(0,3).toUpperCase()}-${Math.floor(100000+Math.random()*900000)}`;
 }
 
-// ══════════════════════════════════════════════════════════
-// CLOUDINARY UPLOAD
-// ══════════════════════════════════════════════════════════
 async function uploadToCloudinary(file) {
   const formData = new FormData();
   formData.append("file", file);
@@ -203,9 +181,6 @@ async function uploadToCloudinary(file) {
   return json.secure_url;
 }
 
-// ══════════════════════════════════════════════════════════
-// AUDIT LOG — every important action gets recorded
-// ══════════════════════════════════════════════════════════
 async function writeAudit(user, action, detail = {}) {
   try {
     await addDoc(collection(db, "auditLogs"), {
@@ -218,7 +193,6 @@ async function writeAudit(user, action, detail = {}) {
       ts: new Date().toISOString(),
     });
   } catch(e) {
-    // audit failure should never break main flow
     console.warn("Audit log failed:", e);
   }
 }
@@ -233,6 +207,9 @@ function useStore() {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "patients"), snap => {
       setPatients(snap.docs.map(d => ({ ...d.data(), _docId: d.id })));
+      setLoading(false);
+    }, err => {
+      console.error("Firestore error:", err);
       setLoading(false);
     });
     return unsub;
@@ -281,49 +258,99 @@ function useStore() {
 }
 
 // ══════════════════════════════════════════════════════════
-// ROOT
+// ROOT — FIXED AUTH FLOW
 // ══════════════════════════════════════════════════════════
 export default function App() {
-  const [user,     setUser]    = useState(null);
+  const [user,      setUser]      = useState(null);
   const [authReady, setAuthReady] = useState(false);
-  const [theme,   setTheme]   = useState("light");
-  const [pending,  setPending] = useState(false); // waiting for role
+  const [pending,   setPending]   = useState(false);
+  const [theme,     setTheme]     = useState("light");
   const store = useStore();
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // 1. Check Firestore for this user's profile
+      if (!firebaseUser) {
+        setUser(null);
+        setPending(false);
+        setAuthReady(true);
+        return;
+      }
+
+      // ── FIX 1: Check USER_META by email first (fast path for known clinic accounts) ──
+      const emailLower = firebaseUser.email?.toLowerCase();
+      const metaEntry = Object.entries(USER_META).find(
+        ([, m]) => m.email.toLowerCase() === emailLower
+      );
+
+      if (metaEntry) {
+        const [username, meta] = metaEntry;
+        // Known clinic/mis account — use USER_META directly, no pending
+        setUser({
+          uid:         firebaseUser.uid,
+          email:       firebaseUser.email,
+          name:        meta.name,
+          role:        meta.role,
+          clinic:      meta.clinic || null,
+          clinicLabel: meta.clinicLabel,
+          username,
+        });
+        setPending(false);
+        setAuthReady(true);
+
+        // Also upsert a userProfiles doc so MIS can see them in Firestore
+        try {
+          const profileRef = doc(db, "userProfiles", firebaseUser.uid);
+          const snap = await getDoc(profileRef);
+          if (!snap.exists()) {
+            await setDoc(profileRef, {
+              email:       firebaseUser.email,
+              name:        meta.name,
+              role:        meta.role,
+              clinic:      meta.clinic || "",
+              clinicLabel: meta.clinicLabel,
+              username,
+              createdAt:   new Date().toISOString(),
+            });
+          }
+        } catch(e) {
+          // Non-fatal — profile write failure doesn't block login
+          console.warn("Profile upsert failed:", e);
+        }
+        return;
+      }
+
+      // ── FIX 2: Unknown email (Google sign-in or self-registered user) ──
+      // Check Firestore for an assigned role
+      try {
         const profileRef = doc(db, "userProfiles", firebaseUser.uid);
         const snap = await getDoc(profileRef);
 
         if (snap.exists()) {
           const profile = snap.data();
-          if (profile.role) {
-            // Has a role assigned — let them in
+          if (profile.role && profile.role !== "") {
             setUser({
-              uid:        firebaseUser.uid,
-              email:      firebaseUser.email,
-              name:       profile.name || firebaseUser.displayName || firebaseUser.email,
-              role:       profile.role,
-              clinic:     profile.clinic || null,
-              clinicLabel:profile.clinicLabel || "All Clinics",
-              username:   profile.username || firebaseUser.email,
+              uid:         firebaseUser.uid,
+              email:       firebaseUser.email,
+              name:        profile.name || firebaseUser.displayName || firebaseUser.email,
+              role:        profile.role,
+              clinic:      profile.clinic || null,
+              clinicLabel: profile.clinicLabel || "All Clinics",
+              username:    profile.username || firebaseUser.email,
             });
             setPending(false);
           } else {
-            // Profile exists but no role yet
+            // Profile exists but role not assigned yet
             setUser(null);
             setPending(true);
           }
         } else {
-          // First time — create a blank profile in Firestore
+          // Brand new Google/email user — create blank profile, wait for admin
           await setDoc(profileRef, {
             email:     firebaseUser.email,
             name:      firebaseUser.displayName || firebaseUser.email,
-            role:      "",       // YOU fill this in Firestore Console
+            role:      "",
             clinic:    "",
             clinicLabel: "",
             createdAt: new Date().toISOString(),
@@ -331,26 +358,37 @@ export default function App() {
           setUser(null);
           setPending(true);
         }
-      } else {
+      } catch(e) {
+        console.error("Profile fetch error:", e);
         setUser(null);
         setPending(false);
       }
+
       setAuthReady(true);
     });
     return unsub;
   }, []);
 
+  // ── LOGIN: username → look up email in USER_META → Firebase Auth ──
   const login = async (username, password) => {
-    const meta = USER_META[username];
-    if (!meta) return "Invalid username.";
+    const meta = USER_META[username.trim()];
+    if (!meta) return "Invalid username. Check spelling (e.g. sl-mis, sl-shyamal).";
     try {
       await signInWithEmailAndPassword(auth, meta.email, password);
-      await writeAudit({ ...meta, username }, "LOGIN", { username });
+      // writeAudit is called after onAuthStateChanged sets user
       return null;
     } catch(e) {
-      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") return "Incorrect password.";
-      if (e.code === "auth/user-not-found") return "Account not set up yet. Ask MIS admin.";
-      return "Login failed. Please try again.";
+      console.error("Login error:", e.code, e.message);
+      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" || e.code === "auth/invalid-login-credentials") {
+        return "Incorrect password. Please try again.";
+      }
+      if (e.code === "auth/user-not-found") {
+        return "Account not found. Run First Time Setup first (MIS admin only).";
+      }
+      if (e.code === "auth/too-many-requests") {
+        return "Too many attempts. Please wait a few minutes and try again.";
+      }
+      return `Login failed: ${e.message}`;
     }
   };
 
@@ -360,14 +398,15 @@ export default function App() {
       await signInWithPopup(auth, provider);
       return null;
     } catch(e) {
+      console.error("Google login error:", e.code, e.message);
+      if (e.code === "auth/popup-closed-by-user") return "Sign-in popup was closed. Please try again.";
       return "Google sign-in failed. Please try again.";
     }
   };
 
   const registerWithEmail = async (email, password, name) => {
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      // Profile will be auto-created in onAuthStateChanged above
+      await createUserWithEmailAndPassword(auth, email, password);
       return null;
     } catch(e) {
       if (e.code === "auth/email-already-in-use") return "This email is already registered.";
@@ -379,79 +418,32 @@ export default function App() {
   const logout = async () => {
     if (user) await writeAudit(user, "LOGOUT", {});
     await signOut(auth);
+    setUser(null);
     setPending(false);
   };
 
   const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
 
+  // ── LOADING ──
   if (!authReady || store.loading) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:16}}>
       <SLogo/>
       <div style={{display:"flex",alignItems:"center",gap:10,color:"var(--muted)",fontSize:13,marginTop:8}}>
         <span style={{width:16,height:16,border:"2px solid #c4b5fd",borderTopColor:"#7c3aed",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>
-        Connecting to database…
+        Connecting…
       </div>
     </div>
   );
 
-  // Waiting for admin to assign role
   if (pending) return <PendingApproval onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
-
-  if (!user) return <Login onLogin={login} onGoogleLogin={loginWithGoogle} onRegister={registerWithEmail} theme={theme} toggleTheme={toggleTheme}/>;
+  if (!user)   return <Login onLogin={login} onGoogleLogin={loginWithGoogle} onRegister={registerWithEmail} theme={theme} toggleTheme={toggleTheme}/>;
   if (user.role === "mis") return <MIS user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
   return <Clinic user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
 }
+
 // ══════════════════════════════════════════════════════════
-// FIRST TIME SETUP — MIS only, run once
-// Creates all 24 clinic accounts in Firebase Auth
+// FIRST TIME SETUP
 // ══════════════════════════════════════════════════════════
-function PendingApproval({ onLogout, theme, toggleTheme }) {
-  return (
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:0,padding:24}}>
-      <button onClick={toggleTheme} style={{position:"fixed",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)"}}>
-        {theme==="light"?"🌙 Dark":"☀️ Light"}
-      </button>
-      <div className="fadeUp" style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:22,padding:"48px 40px",maxWidth:420,width:"100%",textAlign:"center",boxShadow:"var(--cardshadow)"}}>
-        <div style={{fontSize:52,marginBottom:16}}>⏳</div>
-        <SLogo/>
-        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:"var(--text1)",marginTop:22,marginBottom:10}}>Waiting for Approval</div>
-        <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.7,marginBottom:28}}>
-          Your account has been created successfully.<br/>
-          Please wait for your <strong style={{color:"var(--accent)"}}>MIS Admin</strong> to assign your clinic access.<br/>
-          This usually takes a short while. Try signing in again after you're notified.
-        </div>
-        <div style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:11,padding:"12px 16px",fontSize:12,color:"var(--muted)",marginBottom:24}}>
-          📧 Contact your admin if this takes too long.
-        </div>
-        <button onClick={onLogout} style={{background:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"12px 32px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-          Sign Out
-        </button>
-      </div>
-    </div>
-  );
-}
-```
-
----
-
-## Change 5 — Enable Google in Firebase Console
-
-1. Firebase Console → **Authentication** → **Sign-in method**
-2. Click **Google** → toggle **Enable** → add your project's support email → **Save**
-
----
-
-## How to assign a role after someone registers
-
-Once a user registers, go to **Firestore Console → `userProfiles` collection** → find their document (it's named by their Firebase UID) → click **Edit** → set:
-```
-role: "mis"          ← for MIS Admin
-role: "clinic"       ← for clinic staff
-clinic: "shyamal"    ← clinic key (from your CLINICS object)
-clinicLabel: "Shyamal · Ahmedabad"
-name: "Their Name"
-username: "sl-shyamal"
-
 function FirstTimeSetup({ onClose }) {
   const [log, setLog] = useState([]);
   const [done, setDone] = useState(false);
@@ -463,12 +455,12 @@ function FirstTimeSetup({ onClose }) {
     for (const [username, meta] of entries) {
       try {
         await createUserWithEmailAndPassword(auth, meta.email, meta.initPwd);
-        setLog(l => [...l, { ok:true,  msg:`✅ ${username} created` }]);
+        setLog(l => [...l, { ok:true, msg:`✅ ${username} created` }]);
       } catch(e) {
         if (e.code === "auth/email-already-in-use") {
-          setLog(l => [...l, { ok:true,  msg:`⏭ ${username} already exists — skipped` }]);
+          setLog(l => [...l, { ok:true, msg:`⏭ ${username} already exists — skipped` }]);
         } else {
-          setLog(l => [...l, { ok:false, msg:`❌ ${username} failed: ${e.message}` }]);
+          setLog(l => [...l, { ok:false, msg:`❌ ${username} failed: ${e.code}` }]);
         }
       }
     }
@@ -481,8 +473,8 @@ function FirstTimeSetup({ onClose }) {
       <div style={{background:"var(--card)",borderRadius:18,padding:30,maxWidth:520,width:"100%",border:"1px solid var(--cardborder)",boxShadow:"0 32px 80px #00000040"}}>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:"var(--text1)",marginBottom:6}}>First Time Setup</div>
         <div style={{fontSize:12,color:"var(--muted)",marginBottom:20,lineHeight:1.6}}>
-          This creates all 24 clinic accounts in Firebase Auth with their initial passwords.<br/>
-          <strong style={{color:"var(--accent)"}}>Run this ONCE only.</strong> After this, clinic staff login exactly as before.
+          Creates all 24 clinic accounts in Firebase Auth.<br/>
+          <strong style={{color:"var(--accent)"}}>Run this ONCE only.</strong>
         </div>
         {!running && !done && (
           <div style={{display:"flex",gap:10}}>
@@ -499,7 +491,7 @@ function FirstTimeSetup({ onClose }) {
         {done && (
           <div style={{marginTop:16}}>
             <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:9,padding:"10px 14px",fontSize:12,color:"#15803d",fontWeight:600,marginBottom:12}}>
-              ✅ Setup complete! All clinic accounts are ready. You can close this.
+              ✅ Setup complete! All clinic accounts are ready.
             </div>
             <button onClick={onClose} style={S.btn}>Close</button>
           </div>
@@ -510,10 +502,38 @@ function FirstTimeSetup({ onClose }) {
 }
 
 // ══════════════════════════════════════════════════════════
+// PENDING APPROVAL
+// ══════════════════════════════════════════════════════════
+function PendingApproval({ onLogout, theme, toggleTheme }) {
+  return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:0,padding:24}}>
+      <button onClick={toggleTheme} style={{position:"fixed",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)"}}>
+        {theme==="light"?"🌙 Dark":"☀️ Light"}
+      </button>
+      <div className="fadeUp" style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:22,padding:"48px 40px",maxWidth:420,width:"100%",textAlign:"center",boxShadow:"var(--cardshadow)"}}>
+        <div style={{fontSize:52,marginBottom:16}}>⏳</div>
+        <SLogo/>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:"var(--text1)",marginTop:22,marginBottom:10}}>Waiting for Approval</div>
+        <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.7,marginBottom:28}}>
+          Your account has been created.<br/>
+          Please wait for your <strong style={{color:"var(--accent)"}}>MIS Admin</strong> to assign your clinic access.
+        </div>
+        <div style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:11,padding:"12px 16px",fontSize:12,color:"var(--muted)",marginBottom:24}}>
+          📧 Contact your admin if this takes too long.
+        </div>
+        <button onClick={onLogout} style={{background:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"12px 32px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
 // LOGIN
 // ══════════════════════════════════════════════════════════
 function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
-  const [tab,   setTab]  = useState("signin"); // "signin" | "register"
+  const [tab,   setTab]  = useState("signin");
   const [u,     setU]    = useState("");
   const [pw,    setPw]   = useState("");
   const [name,  setName] = useState("");
@@ -522,8 +542,8 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
   const [err,   setErr]  = useState("");
   const [busy,  setBusy] = useState(false);
   const [show,  setShow] = useState(false);
-  const quote = QUOTES[Math.floor(Date.now()/86400000) % QUOTES.length];
   const [showSetup, setShowSetup] = useState(false);
+  const quote = QUOTES[Math.floor(Date.now()/86400000) % QUOTES.length];
 
   const go = async () => {
     if(!u.trim()||!pw.trim()){setErr("Please enter both username and password.");return;}
@@ -552,6 +572,7 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
   return (
     <div style={{minHeight:"100vh",display:"flex",background:"var(--bg)",transition:"background 0.3s"}}>
       {showSetup && <FirstTimeSetup onClose={()=>setShowSetup(false)}/>}
+
       {/* Left panel */}
       <div style={{flex:"0 0 46%",background:"linear-gradient(160deg,#4c1d95 0%,#6d28d9 50%,#7c3aed 100%)",display:"flex",flexDirection:"column",padding:"52px 56px",position:"relative",overflow:"hidden"}}>
         <div style={{position:"absolute",top:-100,left:-100,width:450,height:450,borderRadius:"50%",border:"1px solid #ffffff12"}}/>
@@ -570,7 +591,7 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{height:1,flex:1,background:"linear-gradient(90deg,#ffffff30,transparent)"}}/>
-          <div style={{fontSize:10,color:"#a78bfa",letterSpacing:1.5}}>24 CLINICS · 4 STATES</div>
+          <div style={{fontSize:10,color:"#a78bfa",letterSpacing:1.5}}>25 CLINICS · 5 STATES</div>
           <div style={{height:1,flex:1,background:"linear-gradient(90deg,transparent,#ffffff30)"}}/>
         </div>
       </div>
@@ -590,22 +611,20 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
             </div>
           </div>
 
-          {/* Tab switcher */}
           <div style={{display:"flex",background:"var(--bg3)",borderRadius:11,padding:4,marginBottom:22,border:"1px solid var(--border)"}}>
             {["signin","register"].map(t=>(
               <button key={t} onClick={()=>{setTab(t);setErr("");}} style={{flex:1,padding:"9px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:600,transition:"all 0.18s",
-                background: tab===t ? "var(--accent)" : "transparent",
-                color: tab===t ? "#fff" : "var(--muted)"}}>
+                background:tab===t?"var(--accent)":"transparent",
+                color:tab===t?"#fff":"var(--muted)"}}>
                 {t==="signin" ? "Sign In" : "Register"}
               </button>
             ))}
           </div>
 
           <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:18,padding:"30px",boxShadow:"var(--cardshadow)"}}>
-
             {tab==="signin" && <>
               <label style={S.label}>Username</label>
-              <input style={S.inp} value={u} onChange={e=>{setU(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="e.g. sl-shyamal" autoFocus autoComplete="username"/>
+              <input style={S.inp} value={u} onChange={e=>{setU(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="e.g. sl-mis, sl-shyamal" autoFocus autoComplete="username"/>
               <label style={{...S.label,marginTop:16}}>Password</label>
               <div style={{position:"relative"}}>
                 <input style={{...S.inp,paddingRight:44}} type={show?"text":"password"} value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Enter password" autoComplete="current-password"/>
@@ -638,11 +657,11 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
               </div>
               {err && <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{err}</div>}
               <button className="btn-p" onClick={goRegister} disabled={busy} style={{marginTop:20,width:"100%",padding:"13px",background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:11,color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Creating account…</>:"Create Account →"}
+                {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Creating…</>:"Create Account →"}
               </button>
               <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
                 <div style={{flex:1,height:1,background:"var(--border)"}}/>
-                <span style={{fontSize:11,color:"var(--muted)"}}>or register with</span>
+                <span style={{fontSize:11,color:"var(--muted)"}}>or</span>
                 <div style={{flex:1,height:1,background:"var(--border)"}}/>
               </div>
               <button onClick={goGoogle} disabled={busy} style={{width:"100%",padding:"12px",background:"#fff",border:"1px solid #ddd",borderRadius:11,color:"#333",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px #00000012"}}>
@@ -650,7 +669,7 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
                 Continue with Google
               </button>
               <div style={{marginTop:16,padding:"10px 13px",background:"var(--accentbg)",borderRadius:9,border:"1px solid var(--border)",fontSize:11,color:"var(--muted)",textAlign:"center",lineHeight:1.6}}>
-                After registering, your MIS admin will assign your clinic access. You'll see a confirmation screen until then.
+                After registering, your MIS admin will assign your clinic access.
               </div>
             </>}
           </div>
@@ -665,7 +684,9 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
       </div>
     </div>
   );
-}// ══════════════════════════════════════════════════════════
+}
+
+// ══════════════════════════════════════════════════════════
 // SHELL
 // ══════════════════════════════════════════════════════════
 function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
@@ -799,7 +820,7 @@ function MISOverview({ store, onSelect, setLb }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// AUDIT LOG VIEW — MIS only
+// AUDIT LOG
 // ══════════════════════════════════════════════════════════
 function AuditLog() {
   const [logs, setLogs] = useState([]);
@@ -816,12 +837,12 @@ function AuditLog() {
   }, []);
 
   const ACTION_LABELS = {
-    LOGIN:           { label:"Login",            icon:"🔐", color:"#059669" },
-    LOGOUT:          { label:"Logout",           icon:"🚪", color:"#6d28d9" },
-    PATIENT_CREATED: { label:"Patient Added",    icon:"👤", color:"#7c3aed" },
-    RECORD_UPLOADED: { label:"Record Uploaded",  icon:"📎", color:"#0891b2" },
-    RECORD_DELETED:  { label:"Record Deleted",   icon:"🗑️", color:"#e84c3d" },
-    VISIT_LOGGED:    { label:"Visit Logged",     icon:"📝", color:"#d97706" },
+    LOGIN:           { label:"Login",           icon:"🔐", color:"#059669" },
+    LOGOUT:          { label:"Logout",          icon:"🚪", color:"#6d28d9" },
+    PATIENT_CREATED: { label:"Patient Added",   icon:"👤", color:"#7c3aed" },
+    RECORD_UPLOADED: { label:"Record Uploaded", icon:"📎", color:"#0891b2" },
+    RECORD_DELETED:  { label:"Record Deleted",  icon:"🗑️", color:"#e84c3d" },
+    VISIT_LOGGED:    { label:"Visit Logged",    icon:"📝", color:"#d97706" },
   };
 
   const filtered = filter === "ALL" ? logs : logs.filter(l => l.action === filter);
@@ -870,9 +891,9 @@ function Clinic({ user, store, onLogout, theme, toggleTheme }) {
   const [tab,setTab]=useState("home"); const [selected,setSel]=useState(null); const [lightbox,setLb]=useState(null);
   const myPts=store.patients.filter(p=>p.clinicId===user.clinic);
   const nav=[
-    {id:"home",   icon:"⌂", label:"Home",           active:tab==="home",   onClick:()=>setTab("home")},
-    {id:"search", icon:"⌕", label:"Search Patient",  active:tab==="search", onClick:()=>setTab("search")},
-    {id:"add",    icon:"+", label:"Add Patient",     active:tab==="add",    onClick:()=>setTab("add")},
+    {id:"home",   icon:"⌂", label:"Home",          active:tab==="home",   onClick:()=>setTab("home")},
+    {id:"search", icon:"⌕", label:"Search Patient", active:tab==="search", onClick:()=>setTab("search")},
+    {id:"add",    icon:"+", label:"Add Patient",    active:tab==="add",    onClick:()=>setTab("add")},
   ];
   return (
     <Shell user={user} navItems={nav} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme}>
@@ -1378,7 +1399,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
 // ══════════════════════════════════════════════════════════
 function Lightbox({ src, name, patient, onClose }) {
   const [zoom,setZoom]=useState(1); const [pos,setPos]=useState({x:0,y:0}); const drag=useRef(null);
-  useEffect(()=>{const h=e=>e.key==="Escape"&&onClose();window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[]);
+  useEffect(()=>{const h=e=>e.key==="Escape"&&onClose();window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
   const onWheel=e=>{e.preventDefault();setZoom(z=>Math.min(Math.max(z-e.deltaY*0.002,0.3),5));};
   const onMD=e=>{drag.current={x:e.clientX-pos.x,y:e.clientY-pos.y};};
   const onMM=e=>{if(!drag.current)return;setPos({x:e.clientX-drag.current.x,y:e.clientY-drag.current.y});};
@@ -1407,7 +1428,9 @@ function Lightbox({ src, name, patient, onClose }) {
   );
 }
 
-// ─── ATOMS ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
+// ATOMS
+// ══════════════════════════════════════════════════════════
 function SLogo({ white }) {
   const BAR_COLORS=["#43a047","#66bb6a","#ffa726","#ef5350","#e53935","#ef5350","#ffa726","#66bb6a","#43a047","#66bb6a"];
   return (
@@ -1430,6 +1453,7 @@ function RCard({r,onView,showClinic}){const c=r.patient?CLINICS[r.patient.clinic
 function Cb({code,color="#7c3aed"}){return <span style={{background:color+"18",color,padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:0.5,fontFamily:"monospace"}}>{code}</span>;}
 function FBtn({active,onClick,children,color="#7c3aed"}){return(<button onClick={onClick} style={{padding:"5px 11px",borderRadius:6,border:`1px solid ${active?color:"var(--border)"}`,background:active?color+"18":"transparent",color:active?color:"var(--muted)",fontSize:10,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>{children}</button>);}
 function Empty({msg}){return <div style={{color:"var(--muted2)",fontSize:12,textAlign:"center",padding:"22px 0"}}>{msg}</div>;}
+
 const S={
   label:{fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:0.8,display:"block",marginBottom:6,textTransform:"uppercase"},
   inp:{width:"100%",padding:"10px 13px",background:"var(--inputbg)",border:"1px solid var(--border)",borderRadius:9,color:"var(--text1)",fontSize:13,transition:"all 0.2s"},
