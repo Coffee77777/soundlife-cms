@@ -2,16 +2,28 @@ import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, doc, onSnapshot,
-  addDoc, updateDoc, arrayUnion
+  addDoc, updateDoc, arrayUnion, query, orderBy, limit, getDocs,
+  setDoc, getDoc
 } from "firebase/firestore";
+import {
+  getAuth, signInWithEmailAndPassword, signOut,
+  onAuthStateChanged, createUserWithEmailAndPassword,
+  updatePassword, GoogleAuthProvider, signInWithPopup
+} from "firebase/auth";
+
+import { setDoc, getDoc } from "firebase/firestore";
 
 /* ══════════════════════════════════════════════════════════
    SOUNDLIFE — Multi-Clinic Patient Management System
-   Speech & Hearing Clinic · Internal CMS v3.0
-   Firebase (Firestore) + Cloudinary (Images) Edition
+   Speech & Hearing Clinic · Internal CMS v4.0
+   Firebase Auth + Firestore + Cloudinary
+   ══════════════════════════════════════════════════════════
+   SETUP (ONE TIME ONLY):
+   1. Firebase Console → Authentication → Enable Email/Password
+   2. Firebase Console → Firestore → Rules → allow only auth users
+   3. Login as sl-mis → click "First Time Setup" → done forever
    ══════════════════════════════════════════════════════════ */
 
-// ─── FIREBASE CONFIG ─────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey:            "AIzaSyAMMAEo_PygPUZy66a1w542lIpA8hF3mAM",
   authDomain:        "soundlife-cms.firebaseapp.com",
@@ -21,21 +33,18 @@ const firebaseConfig = {
   appId:             "1:764492442025:web:c86e985882586db4e93cb8",
 };
 
-// ─── CLOUDINARY CONFIG ────────────────────────────────────────────────────────
-const CLOUDINARY_CLOUD_NAME   = "dh8sufa3o";
+const CLOUDINARY_CLOUD_NAME    = "dh8sufa3o";
 const CLOUDINARY_UPLOAD_PRESET = "zavhutrz";
 
-const app = initializeApp(firebaseConfig);
-const db  = getFirestore(app);
-// Firebase Storage is no longer imported or used — Cloudinary handles all files
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
 
-// ─── FONT ─────────────────────────────────────────────────────────────────────
 const fontLink = document.createElement("link");
 fontLink.rel = "stylesheet";
 fontLink.href = "https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap";
 document.head.appendChild(fontLink);
 
-// ─── CSS VARIABLES + FULL THEME SYSTEM ───────────────────────────────────────
 const styleEl = document.createElement("style");
 styleEl.textContent = `
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -97,18 +106,19 @@ const QUOTES = [
   { q:"They say music soothes the soul. We make sure you never miss a single note.", a:"— SoundLife Promise" },
 ];
 
+// ─── FIX: All Gujarat cities under Gujarat region ─────────
 const CLINICS = {
-  shyamal:      { label:"Shyamal",       city:"Ahmedabad",   region:"Ahmedabad",   color:"#7c3aed" },
-  sciencecity:  { label:"Science City",  city:"Ahmedabad",   region:"Ahmedabad",   color:"#6d28d9" },
-  maninagar:    { label:"Maninagar",     city:"Ahmedabad",   region:"Ahmedabad",   color:"#8b5cf6" },
-  bapunagar:    { label:"Bapunagar",     city:"Ahmedabad",   region:"Ahmedabad",   color:"#7c3aed" },
-  gopal:        { label:"Gopal",         city:"Ahmedabad",   region:"Ahmedabad",   color:"#6d28d9" },
-  naroda:       { label:"Naroda",        city:"Ahmedabad",   region:"Ahmedabad",   color:"#8b5cf6" },
-  naranpura:    { label:"Naranpura",     city:"Ahmedabad",   region:"Ahmedabad",   color:"#7c3aed" },
-  chandkheda:   { label:"Chandkheda",    city:"Ahmedabad",   region:"Ahmedabad",   color:"#6d28d9" },
-  wadaj:        { label:"Wadaj",         city:"Ahmedabad",   region:"Ahmedabad",   color:"#8b5cf6" },
-  lalbagh:      { label:"Lalbagh",       city:"Vadodara",    region:"Vadodara",    color:"#7c3aed" },
-  alkapuri:     { label:"Alkapuri",      city:"Vadodara",    region:"Vadodara",    color:"#6d28d9" },
+  shyamal:      { label:"Shyamal",       city:"Ahmedabad",   region:"Gujarat",     color:"#7c3aed" },
+  sciencecity:  { label:"Science City",  city:"Ahmedabad",   region:"Gujarat",     color:"#6d28d9" },
+  maninagar:    { label:"Maninagar",     city:"Ahmedabad",   region:"Gujarat",     color:"#8b5cf6" },
+  bapunagar:    { label:"Bapunagar",     city:"Ahmedabad",   region:"Gujarat",     color:"#7c3aed" },
+  gopal:        { label:"Gopal",         city:"Ahmedabad",   region:"Gujarat",     color:"#6d28d9" },
+  naroda:       { label:"Naroda",        city:"Ahmedabad",   region:"Gujarat",     color:"#8b5cf6" },
+  naranpura:    { label:"Naranpura",     city:"Ahmedabad",   region:"Gujarat",     color:"#7c3aed" },
+  chandkheda:   { label:"Chandkheda",    city:"Ahmedabad",   region:"Gujarat",     color:"#6d28d9" },
+  wadaj:        { label:"Wadaj",         city:"Ahmedabad",   region:"Gujarat",     color:"#8b5cf6" },
+  lalbagh:      { label:"Lalbagh",       city:"Vadodara",    region:"Gujarat",     color:"#7c3aed" },
+  alkapuri:     { label:"Alkapuri",      city:"Vadodara",    region:"Gujarat",     color:"#6d28d9" },
   anand:        { label:"Anand",         city:"Anand",       region:"Gujarat",     color:"#8b5cf6" },
   nadiad:       { label:"Nadiad",        city:"Nadiad",      region:"Gujarat",     color:"#7c3aed" },
   bhuj:         { label:"Bhuj",          city:"Bhuj",        region:"Gujarat",     color:"#6d28d9" },
@@ -124,51 +134,50 @@ const CLINICS = {
 };
 
 const REGIONS = {
-  "Ahmedabad":   ["shyamal","sciencecity","maninagar","bapunagar","gopal","naroda","naranpura","chandkheda","wadaj"],
-  "Vadodara":    ["lalbagh","alkapuri"],
-  "Gujarat":     ["anand","nadiad","bhuj","vapi","rajkot","bharuch"],
+  "Gujarat":     ["shyamal","sciencecity","maninagar","bapunagar","gopal","naroda","naranpura","chandkheda","wadaj","lalbagh","alkapuri","anand","nadiad","bhuj","vapi","rajkot","bharuch"],
   "Karnataka":   ["indiranagar","yelahanka"],
   "Maharashtra": ["juhu","versova","dadar"],
   "Odisha":      ["bhubaneswar"],
 };
 
-const USERS = {
-  "sl-mis":         { password:"SL@MIS2025#Admin", role:"mis",    name:"MIS Admin",         clinic:null,          clinicLabel:"All Clinics" },
-  "sl-shyamal":     { password:"SHY@Sound24!",     role:"clinic", name:"Shyamal Staff",      clinic:"shyamal",     clinicLabel:"Shyamal · Ahmedabad" },
-  "sl-scity":       { password:"SCI@Sound24!",     role:"clinic", name:"Science City Staff", clinic:"sciencecity", clinicLabel:"Science City · Ahmedabad" },
-  "sl-maninagar":   { password:"MAN@Sound24!",     role:"clinic", name:"Maninagar Staff",    clinic:"maninagar",   clinicLabel:"Maninagar · Ahmedabad" },
-  "sl-bapunagar":   { password:"BAP@Sound24!",     role:"clinic", name:"Bapunagar Staff",    clinic:"bapunagar",   clinicLabel:"Bapunagar · Ahmedabad" },
-  "sl-gopal":       { password:"GOP@Sound24!",     role:"clinic", name:"Gopal Staff",        clinic:"gopal",       clinicLabel:"Gopal · Ahmedabad" },
-  "sl-naroda":      { password:"NAR@Sound24!",     role:"clinic", name:"Naroda Staff",       clinic:"naroda",      clinicLabel:"Naroda · Ahmedabad" },
-  "sl-naranpura":   { password:"NRN@Sound24!",     role:"clinic", name:"Naranpura Staff",    clinic:"naranpura",   clinicLabel:"Naranpura · Ahmedabad" },
-  "sl-chandkheda":  { password:"CKH@Sound24!",     role:"clinic", name:"Chandkheda Staff",   clinic:"chandkheda",  clinicLabel:"Chandkheda · Ahmedabad" },
-  "sl-wadaj":       { password:"WAD@Sound24!",     role:"clinic", name:"Wadaj Staff",        clinic:"wadaj",       clinicLabel:"Wadaj · Ahmedabad" },
-  "sl-lalbagh":     { password:"LAL@Sound24!",     role:"clinic", name:"Lalbagh Staff",      clinic:"lalbagh",     clinicLabel:"Lalbagh · Vadodara" },
-  "sl-alkapuri":    { password:"ALK@Sound24!",     role:"clinic", name:"Alkapuri Staff",     clinic:"alkapuri",    clinicLabel:"Alkapuri · Vadodara" },
-  "sl-anand":       { password:"AND@Sound24!",     role:"clinic", name:"Anand Staff",        clinic:"anand",       clinicLabel:"Anand" },
-  "sl-nadiad":      { password:"NDI@Sound24!",     role:"clinic", name:"Nadiad Staff",       clinic:"nadiad",      clinicLabel:"Nadiad" },
-  "sl-bhuj":        { password:"BHJ@Sound24!",     role:"clinic", name:"Bhuj Staff",         clinic:"bhuj",        clinicLabel:"Bhuj" },
-  "sl-vapi":        { password:"VAP@Sound24!",     role:"clinic", name:"Vapi Staff",         clinic:"vapi",        clinicLabel:"Vapi" },
-  "sl-rajkot":      { password:"RJK@Sound24!",     role:"clinic", name:"Rajkot Staff",       clinic:"rajkot",      clinicLabel:"Rajkot" },
-  "sl-bharuch":     { password:"BHR@Sound24!",     role:"clinic", name:"Bharuch Staff",      clinic:"bharuch",     clinicLabel:"Bharuch" },
-  "sl-indiranagar": { password:"IND@Sound24!",     role:"clinic", name:"Indiranagar Staff",  clinic:"indiranagar", clinicLabel:"Indiranagar · Bengaluru" },
-  "sl-yelahanka":   { password:"YLK@Sound24!",     role:"clinic", name:"Yelahanka Staff",    clinic:"yelahanka",   clinicLabel:"Yelahanka · Bengaluru" },
-  "sl-juhu":        { password:"JHU@Sound24!",     role:"clinic", name:"Juhu Staff",         clinic:"juhu",        clinicLabel:"Juhu · Mumbai" },
-  "sl-versova":     { password:"VRS@Sound24!",     role:"clinic", name:"Versova Staff",      clinic:"versova",     clinicLabel:"Versova · Mumbai" },
-  "sl-dadar":       { password:"DDR@Sound24!",     role:"clinic", name:"Dadar Staff",        clinic:"dadar",       clinicLabel:"Dadar · Mumbai" },
-  "sl-bhubaneswar": { password:"BBS@Sound24!",     role:"clinic", name:"Bhubaneswar Staff",  clinic:"bhubaneswar", clinicLabel:"Bhubaneswar · Odisha" },
+// ─── USER METADATA — no passwords stored here ─────────────
+// Passwords live in Firebase Auth only, invisible in source
+const USER_META = {
+  "sl-mis":         { email:"sl-mis@soundlife.in",         role:"mis",    name:"MIS Admin",         clinic:null,          clinicLabel:"All Clinics",              initPwd:"SL@MIS2025#Admin" },
+  "sl-shyamal":     { email:"sl-shyamal@soundlife.in",     role:"clinic", name:"Shyamal Staff",      clinic:"shyamal",     clinicLabel:"Shyamal · Ahmedabad",       initPwd:"SHY@Sound24!" },
+  "sl-scity":       { email:"sl-scity@soundlife.in",       role:"clinic", name:"Science City Staff", clinic:"sciencecity", clinicLabel:"Science City · Ahmedabad",  initPwd:"SCI@Sound24!" },
+  "sl-maninagar":   { email:"sl-maninagar@soundlife.in",   role:"clinic", name:"Maninagar Staff",    clinic:"maninagar",   clinicLabel:"Maninagar · Ahmedabad",     initPwd:"MAN@Sound24!" },
+  "sl-bapunagar":   { email:"sl-bapunagar@soundlife.in",   role:"clinic", name:"Bapunagar Staff",    clinic:"bapunagar",   clinicLabel:"Bapunagar · Ahmedabad",     initPwd:"BAP@Sound24!" },
+  "sl-gopal":       { email:"sl-gopal@soundlife.in",       role:"clinic", name:"Gopal Staff",        clinic:"gopal",       clinicLabel:"Gopal · Ahmedabad",         initPwd:"GOP@Sound24!" },
+  "sl-naroda":      { email:"sl-naroda@soundlife.in",      role:"clinic", name:"Naroda Staff",       clinic:"naroda",      clinicLabel:"Naroda · Ahmedabad",        initPwd:"NAR@Sound24!" },
+  "sl-naranpura":   { email:"sl-naranpura@soundlife.in",   role:"clinic", name:"Naranpura Staff",    clinic:"naranpura",   clinicLabel:"Naranpura · Ahmedabad",     initPwd:"NRN@Sound24!" },
+  "sl-chandkheda":  { email:"sl-chandkheda@soundlife.in",  role:"clinic", name:"Chandkheda Staff",   clinic:"chandkheda",  clinicLabel:"Chandkheda · Ahmedabad",    initPwd:"CKH@Sound24!" },
+  "sl-wadaj":       { email:"sl-wadaj@soundlife.in",       role:"clinic", name:"Wadaj Staff",        clinic:"wadaj",       clinicLabel:"Wadaj · Ahmedabad",         initPwd:"WAD@Sound24!" },
+  "sl-lalbagh":     { email:"sl-lalbagh@soundlife.in",     role:"clinic", name:"Lalbagh Staff",      clinic:"lalbagh",     clinicLabel:"Lalbagh · Vadodara",        initPwd:"LAL@Sound24!" },
+  "sl-alkapuri":    { email:"sl-alkapuri@soundlife.in",    role:"clinic", name:"Alkapuri Staff",     clinic:"alkapuri",    clinicLabel:"Alkapuri · Vadodara",       initPwd:"ALK@Sound24!" },
+  "sl-anand":       { email:"sl-anand@soundlife.in",       role:"clinic", name:"Anand Staff",        clinic:"anand",       clinicLabel:"Anand",                     initPwd:"AND@Sound24!" },
+  "sl-nadiad":      { email:"sl-nadiad@soundlife.in",      role:"clinic", name:"Nadiad Staff",       clinic:"nadiad",      clinicLabel:"Nadiad",                    initPwd:"NDI@Sound24!" },
+  "sl-bhuj":        { email:"sl-bhuj@soundlife.in",        role:"clinic", name:"Bhuj Staff",         clinic:"bhuj",        clinicLabel:"Bhuj",                      initPwd:"BHJ@Sound24!" },
+  "sl-vapi":        { email:"sl-vapi@soundlife.in",        role:"clinic", name:"Vapi Staff",         clinic:"vapi",        clinicLabel:"Vapi",                      initPwd:"VAP@Sound24!" },
+  "sl-rajkot":      { email:"sl-rajkot@soundlife.in",      role:"clinic", name:"Rajkot Staff",       clinic:"rajkot",      clinicLabel:"Rajkot",                    initPwd:"RJK@Sound24!" },
+  "sl-bharuch":     { email:"sl-bharuch@soundlife.in",     role:"clinic", name:"Bharuch Staff",      clinic:"bharuch",     clinicLabel:"Bharuch",                   initPwd:"BHR@Sound24!" },
+  "sl-indiranagar": { email:"sl-indiranagar@soundlife.in", role:"clinic", name:"Indiranagar Staff",  clinic:"indiranagar", clinicLabel:"Indiranagar · Bengaluru",   initPwd:"IND@Sound24!" },
+  "sl-yelahanka":   { email:"sl-yelahanka@soundlife.in",   role:"clinic", name:"Yelahanka Staff",    clinic:"yelahanka",   clinicLabel:"Yelahanka · Bengaluru",     initPwd:"YLK@Sound24!" },
+  "sl-juhu":        { email:"sl-juhu@soundlife.in",        role:"clinic", name:"Juhu Staff",         clinic:"juhu",        clinicLabel:"Juhu · Mumbai",             initPwd:"JHU@Sound24!" },
+  "sl-versova":     { email:"sl-versova@soundlife.in",     role:"clinic", name:"Versova Staff",      clinic:"versova",     clinicLabel:"Versova · Mumbai",          initPwd:"VRS@Sound24!" },
+  "sl-dadar":       { email:"sl-dadar@soundlife.in",       role:"clinic", name:"Dadar Staff",        clinic:"dadar",       clinicLabel:"Dadar · Mumbai",            initPwd:"DDR@Sound24!" },
+  "sl-bhubaneswar": { email:"sl-bhubaneswar@soundlife.in", role:"clinic", name:"Bhubaneswar Staff",  clinic:"bhubaneswar", clinicLabel:"Bhubaneswar · Odisha",      initPwd:"BBS@Sound24!" },
 };
 
+// reverse lookup: email → username
+const EMAIL_TO_META = Object.fromEntries(
+  Object.entries(USER_META).map(([u, m]) => [m.email, { ...m, username: u }])
+);
+
 const SOURCE_OPTIONS = [
-  "Walk-in",
-  "Doctor / Hospital Referral",
-  "Friend / Family Referral",
-  "Google / Online Search",
-  "Social Media",
-  "Camp / Health Drive",
-  "Newspaper / Print Ad",
-  "Existing Patient Referral",
-  "Other",
+  "Walk-in","Doctor / Hospital Referral","Friend / Family Referral",
+  "Google / Online Search","Social Media","Camp / Health Drive",
+  "Newspaper / Print Ad","Existing Patient Referral","Other",
 ];
 
 function genCode(cid) {
@@ -176,9 +185,7 @@ function genCode(cid) {
 }
 
 // ══════════════════════════════════════════════════════════
-// CLOUDINARY UPLOAD HELPER
-// Uploads file → returns secure URL string
-// Firestore stores only the URL — no Firebase Storage used
+// CLOUDINARY UPLOAD
 // ══════════════════════════════════════════════════════════
 async function uploadToCloudinary(file) {
   const formData = new FormData();
@@ -186,11 +193,31 @@ async function uploadToCloudinary(file) {
   formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/upload`,
-    { method: "POST", body: formData }
+    { method:"POST", body:formData }
   );
   if (!res.ok) throw new Error("Cloudinary upload failed");
   const json = await res.json();
-  return json.secure_url; // permanent HTTPS URL saved to Firestore
+  return json.secure_url;
+}
+
+// ══════════════════════════════════════════════════════════
+// AUDIT LOG — every important action gets recorded
+// ══════════════════════════════════════════════════════════
+async function writeAudit(user, action, detail = {}) {
+  try {
+    await addDoc(collection(db, "auditLogs"), {
+      username:    user.username,
+      name:        user.name,
+      clinicId:    user.clinic || "mis",
+      clinicLabel: user.clinicLabel,
+      action,
+      detail,
+      ts: new Date().toISOString(),
+    });
+  } catch(e) {
+    // audit failure should never break main flow
+    console.warn("Audit log failed:", e);
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -208,47 +235,38 @@ function useStore() {
     return unsub;
   }, []);
 
-  const addPatient = async (d) => {
+  const addPatient = async (d, user) => {
     const p = { ...d, id:genCode(d.clinicId), createdAt:new Date().toISOString(), records:[], visits:[] };
     const ref = await addDoc(collection(db, "patients"), p);
+    await writeAudit(user, "PATIENT_CREATED", { patientId:p.id, patientName:p.name, clinicId:p.clinicId });
     return { ...p, _docId: ref.id };
   };
 
-  const addRecord = async (pid, r) => {
+  const addRecord = async (pid, r, user) => {
     const patient = patients.find(p => p.id === pid);
     if (!patient) return;
-
     let dataUrl = r.data;
-    if (r.file) {
-      // Upload to Cloudinary → get back a permanent URL
-      dataUrl = await uploadToCloudinary(r.file);
-    }
-
-    const record = {
-      type: r.type,
-      name: r.name,
-      data: dataUrl,       // Cloudinary secure_url stored here
-      ts:   new Date().toISOString(),
-      rid:  Date.now().toString(),
-    };
+    if (r.file) { dataUrl = await uploadToCloudinary(r.file); }
+    const record = { type:r.type, name:r.name, data:dataUrl, ts:new Date().toISOString(), rid:Date.now().toString() };
     await updateDoc(doc(db, "patients", patient._docId), { records: arrayUnion(record) });
+    await writeAudit(user, "RECORD_UPLOADED", { patientId:pid, fileName:r.name, fileType:r.type });
   };
 
-  const deleteRecord = async (pid, rid) => {
+  const deleteRecord = async (pid, rid, user) => {
     const patient = patients.find(p => p.id === pid);
     if (!patient) return;
     await updateDoc(doc(db, "patients", patient._docId), {
       records: (patient.records||[]).filter(r => r.rid !== rid)
     });
-    // Note: Cloudinary image remains on their CDN (free tier keeps it).
-    // To also delete from Cloudinary you'd need a signed API call from a backend.
+    await writeAudit(user, "RECORD_DELETED", { patientId:pid, rid });
   };
 
-  const addVisit = async (pid, v) => {
+  const addVisit = async (pid, v, user) => {
     const patient = patients.find(p => p.id === pid);
     if (!patient) return;
     const visit = { ...v, ts:new Date().toISOString(), vid:Date.now().toString() };
     await updateDoc(doc(db, "patients", patient._docId), { visits: arrayUnion(visit) });
+    await writeAudit(user, "VISIT_LOGGED", { patientId:pid, patientName:patient.name });
   };
 
   const searchPhone       = (q) => patients.filter(p => p.phone.includes(q));
@@ -263,17 +281,107 @@ function useStore() {
 // ROOT
 // ══════════════════════════════════════════════════════════
 export default function App() {
-  const [user,  setUser]  = useState(null);
-  const [theme, setTheme] = useState("light");
+  const [user,     setUser]    = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [theme,   setTheme]   = useState("light");
+  const [pending,  setPending] = useState(false); // waiting for role
   const store = useStore();
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
 
-  const login       = (u,pw) => { const usr=USERS[u]; if(usr&&usr.password===pw){setUser({...usr,username:u});return true;} return false; };
-  const logout      = () => setUser(null);
-  const toggleTheme = () => setTheme(t => t==="light"?"dark":"light");
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // 1. Check Firestore for this user's profile
+        const profileRef = doc(db, "userProfiles", firebaseUser.uid);
+        const snap = await getDoc(profileRef);
 
-  if (store.loading) return (
+        if (snap.exists()) {
+          const profile = snap.data();
+          if (profile.role) {
+            // Has a role assigned — let them in
+            setUser({
+              uid:        firebaseUser.uid,
+              email:      firebaseUser.email,
+              name:       profile.name || firebaseUser.displayName || firebaseUser.email,
+              role:       profile.role,
+              clinic:     profile.clinic || null,
+              clinicLabel:profile.clinicLabel || "All Clinics",
+              username:   profile.username || firebaseUser.email,
+            });
+            setPending(false);
+          } else {
+            // Profile exists but no role yet
+            setUser(null);
+            setPending(true);
+          }
+        } else {
+          // First time — create a blank profile in Firestore
+          await setDoc(profileRef, {
+            email:     firebaseUser.email,
+            name:      firebaseUser.displayName || firebaseUser.email,
+            role:      "",       // YOU fill this in Firestore Console
+            clinic:    "",
+            clinicLabel: "",
+            createdAt: new Date().toISOString(),
+          });
+          setUser(null);
+          setPending(true);
+        }
+      } else {
+        setUser(null);
+        setPending(false);
+      }
+      setAuthReady(true);
+    });
+    return unsub;
+  }, []);
+
+  const login = async (username, password) => {
+    const meta = USER_META[username];
+    if (!meta) return "Invalid username.";
+    try {
+      await signInWithEmailAndPassword(auth, meta.email, password);
+      await writeAudit({ ...meta, username }, "LOGIN", { username });
+      return null;
+    } catch(e) {
+      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") return "Incorrect password.";
+      if (e.code === "auth/user-not-found") return "Account not set up yet. Ask MIS admin.";
+      return "Login failed. Please try again.";
+    }
+  };
+
+  const loginWithGoogle = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      return null;
+    } catch(e) {
+      return "Google sign-in failed. Please try again.";
+    }
+  };
+
+  const registerWithEmail = async (email, password, name) => {
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      // Profile will be auto-created in onAuthStateChanged above
+      return null;
+    } catch(e) {
+      if (e.code === "auth/email-already-in-use") return "This email is already registered.";
+      if (e.code === "auth/weak-password") return "Password must be at least 6 characters.";
+      return "Registration failed. Please try again.";
+    }
+  };
+
+  const logout = async () => {
+    if (user) await writeAudit(user, "LOGOUT", {});
+    await signOut(auth);
+    setPending(false);
+  };
+
+  const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
+
+  if (!authReady || store.loading) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:16}}>
       <SLogo/>
       <div style={{display:"flex",alignItems:"center",gap:10,color:"var(--muted)",fontSize:13,marginTop:8}}>
@@ -283,31 +391,173 @@ export default function App() {
     </div>
   );
 
-  if (!user) return <Login onLogin={login} theme={theme} toggleTheme={toggleTheme}/>;
-  if (user.role==="mis") return <MIS user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
+  // Waiting for admin to assign role
+  if (pending) return <PendingApproval onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
+
+  if (!user) return <Login onLogin={login} onGoogleLogin={loginWithGoogle} onRegister={registerWithEmail} theme={theme} toggleTheme={toggleTheme}/>;
+  if (user.role === "mis") return <MIS user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
   return <Clinic user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
+}
+// ══════════════════════════════════════════════════════════
+// FIRST TIME SETUP — MIS only, run once
+// Creates all 24 clinic accounts in Firebase Auth
+// ══════════════════════════════════════════════════════════
+function PendingApproval({ onLogout, theme, toggleTheme }) {
+  return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:0,padding:24}}>
+      <button onClick={toggleTheme} style={{position:"fixed",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)"}}>
+        {theme==="light"?"🌙 Dark":"☀️ Light"}
+      </button>
+      <div className="fadeUp" style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:22,padding:"48px 40px",maxWidth:420,width:"100%",textAlign:"center",boxShadow:"var(--cardshadow)"}}>
+        <div style={{fontSize:52,marginBottom:16}}>⏳</div>
+        <SLogo/>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:"var(--text1)",marginTop:22,marginBottom:10}}>Waiting for Approval</div>
+        <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.7,marginBottom:28}}>
+          Your account has been created successfully.<br/>
+          Please wait for your <strong style={{color:"var(--accent)"}}>MIS Admin</strong> to assign your clinic access.<br/>
+          This usually takes a short while. Try signing in again after you're notified.
+        </div>
+        <div style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:11,padding:"12px 16px",fontSize:12,color:"var(--muted)",marginBottom:24}}>
+          📧 Contact your admin if this takes too long.
+        </div>
+        <button onClick={onLogout} style={{background:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"12px 32px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## Change 5 — Enable Google in Firebase Console
+
+1. Firebase Console → **Authentication** → **Sign-in method**
+2. Click **Google** → toggle **Enable** → add your project's support email → **Save**
+
+---
+
+## How to assign a role after someone registers
+
+Once a user registers, go to **Firestore Console → `userProfiles` collection** → find their document (it's named by their Firebase UID) → click **Edit** → set:
+```
+role: "mis"          ← for MIS Admin
+role: "clinic"       ← for clinic staff
+clinic: "shyamal"    ← clinic key (from your CLINICS object)
+clinicLabel: "Shyamal · Ahmedabad"
+name: "Their Name"
+username: "sl-shyamal"
+
+function FirstTimeSetup({ onClose }) {
+  const [log, setLog] = useState([]);
+  const [done, setDone] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    const entries = Object.entries(USER_META).filter(([u]) => u !== "sl-mis");
+    for (const [username, meta] of entries) {
+      try {
+        await createUserWithEmailAndPassword(auth, meta.email, meta.initPwd);
+        setLog(l => [...l, { ok:true,  msg:`✅ ${username} created` }]);
+      } catch(e) {
+        if (e.code === "auth/email-already-in-use") {
+          setLog(l => [...l, { ok:true,  msg:`⏭ ${username} already exists — skipped` }]);
+        } else {
+          setLog(l => [...l, { ok:false, msg:`❌ ${username} failed: ${e.message}` }]);
+        }
+      }
+    }
+    setDone(true);
+    setRunning(false);
+  };
+
+  return (
+    <div className="fadeIn" style={{position:"fixed",inset:0,background:"#00000077",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(6px)"}}>
+      <div style={{background:"var(--card)",borderRadius:18,padding:30,maxWidth:520,width:"100%",border:"1px solid var(--cardborder)",boxShadow:"0 32px 80px #00000040"}}>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:"var(--text1)",marginBottom:6}}>First Time Setup</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:20,lineHeight:1.6}}>
+          This creates all 24 clinic accounts in Firebase Auth with their initial passwords.<br/>
+          <strong style={{color:"var(--accent)"}}>Run this ONCE only.</strong> After this, clinic staff login exactly as before.
+        </div>
+        {!running && !done && (
+          <div style={{display:"flex",gap:10}}>
+            <button className="btn-p" onClick={run} style={S.btn}>▶ Run Setup Now</button>
+            <button onClick={onClose} style={S.btnG}>Cancel</button>
+          </div>
+        )}
+        {(running || log.length > 0) && (
+          <div style={{background:"var(--bg)",borderRadius:10,padding:14,marginTop:16,maxHeight:280,overflow:"auto",fontSize:11,fontFamily:"monospace",border:"1px solid var(--border)"}}>
+            {log.map((l,i)=><div key={i} style={{color:l.ok?"var(--green)":"var(--danger)",marginBottom:3}}>{l.msg}</div>)}
+            {running && <div style={{color:"var(--muted)",marginTop:4}}>Working…</div>}
+          </div>
+        )}
+        {done && (
+          <div style={{marginTop:16}}>
+            <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:9,padding:"10px 14px",fontSize:12,color:"#15803d",fontWeight:600,marginBottom:12}}>
+              ✅ Setup complete! All clinic accounts are ready. You can close this.
+            </div>
+            <button onClick={onClose} style={S.btn}>Close</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ══════════════════════════════════════════════════════════
 // LOGIN
 // ══════════════════════════════════════════════════════════
-function Login({ onLogin, theme, toggleTheme }) {
-  const [u,setU]=useState(""); const [pw,setPw]=useState(""); const [err,setErr]=useState("");
-  const [busy,setBusy]=useState(false); const [show,setShow]=useState(false);
+function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
+  const [tab,   setTab]  = useState("signin"); // "signin" | "register"
+  const [u,     setU]    = useState("");
+  const [pw,    setPw]   = useState("");
+  const [name,  setName] = useState("");
+  const [email, setEmail]= useState("");
+  const [rpw,   setRpw]  = useState("");
+  const [err,   setErr]  = useState("");
+  const [busy,  setBusy] = useState(false);
+  const [show,  setShow] = useState(false);
   const quote = QUOTES[Math.floor(Date.now()/86400000) % QUOTES.length];
-  const go = () => {
+  const [showSetup, setShowSetup] = useState(false);
+
+  const go = async () => {
     if(!u.trim()||!pw.trim()){setErr("Please enter both username and password.");return;}
     setBusy(true); setErr("");
-    setTimeout(()=>{if(!onLogin(u.trim(),pw))setErr("Invalid credentials. Please contact your MIS administrator.");setBusy(false);},800);
+    const error = await onLogin(u.trim(), pw);
+    if (error) setErr(error);
+    setBusy(false);
   };
+
+  const goGoogle = async () => {
+    setBusy(true); setErr("");
+    const error = await onGoogleLogin();
+    if (error) setErr(error);
+    setBusy(false);
+  };
+
+  const goRegister = async () => {
+    if(!name.trim()||!email.trim()||!rpw.trim()){setErr("Please fill all fields.");return;}
+    if(rpw.length < 6){setErr("Password must be at least 6 characters.");return;}
+    setBusy(true); setErr("");
+    const error = await onRegister(email.trim(), rpw, name.trim());
+    if (error) setErr(error);
+    setBusy(false);
+  };
+
   return (
     <div style={{minHeight:"100vh",display:"flex",background:"var(--bg)",transition:"background 0.3s"}}>
+      {showSetup && <FirstTimeSetup onClose={()=>setShowSetup(false)}/>}
+      {/* Left panel */}
       <div style={{flex:"0 0 46%",background:"linear-gradient(160deg,#4c1d95 0%,#6d28d9 50%,#7c3aed 100%)",display:"flex",flexDirection:"column",padding:"52px 56px",position:"relative",overflow:"hidden"}}>
         <div style={{position:"absolute",top:-100,left:-100,width:450,height:450,borderRadius:"50%",border:"1px solid #ffffff12"}}/>
         <div style={{position:"absolute",top:-50,left:-50,width:280,height:280,borderRadius:"50%",border:"1px solid #ffffff18"}}/>
         <div style={{position:"absolute",bottom:-80,right:-60,width:380,height:380,borderRadius:"50%",border:"1px solid #ffffff0a"}}/>
         <div style={{position:"absolute",bottom:80,left:0,right:0,display:"flex",alignItems:"center",justifyContent:"center",gap:4,opacity:0.15}}>
-          {[10,24,16,38,20,48,28,42,18,32,14,28,22,44,12,36,24,42,16,30].map((h,i)=>(<div key={i} style={{width:3,height:h,background:"#fff",borderRadius:99}}/>))}
+          {[10,24,16,38,20,48,28,42,18,32,14,28,22,44,12,36,24,42,16,30].map((h,i)=>(
+            <div key={i} style={{width:3,height:h,background:"#fff",borderRadius:99}}/>
+          ))}
         </div>
         <div style={{marginBottom:"auto"}}><SLogo white/></div>
         <div style={{marginBottom:52}}>
@@ -317,44 +567,102 @@ function Login({ onLogin, theme, toggleTheme }) {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{height:1,flex:1,background:"linear-gradient(90deg,#ffffff30,transparent)"}}/>
-          <div style={{fontSize:10,color:"#a78bfa",letterSpacing:1.5}}>24 CLINICS · 6 STATES</div>
+          <div style={{fontSize:10,color:"#a78bfa",letterSpacing:1.5}}>24 CLINICS · 4 STATES</div>
           <div style={{height:1,flex:1,background:"linear-gradient(90deg,transparent,#ffffff30)"}}/>
         </div>
       </div>
+
+      {/* Right panel */}
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 56px",background:"var(--bg)",position:"relative",transition:"background 0.3s"}}>
         <button onClick={toggleTheme} style={{position:"absolute",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)",display:"flex",alignItems:"center",gap:6,boxShadow:"var(--cardshadow)"}}>
           {theme==="light"?"🌙 Dark":"☀️ Light"}
         </button>
         <div className="fadeUp" style={{width:"100%",maxWidth:400}}>
-          <div style={{marginBottom:32}}>
-            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:"var(--text1)",letterSpacing:-0.5}}>Welcome back</div>
-            <div style={{fontSize:13,color:"var(--muted)",marginTop:6}}>Sign in to your SoundLife clinic portal</div>
+          <div style={{marginBottom:28}}>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:"var(--text1)",letterSpacing:-0.5}}>
+              {tab==="signin" ? "Welcome back" : "Create account"}
+            </div>
+            <div style={{fontSize:13,color:"var(--muted)",marginTop:6}}>
+              {tab==="signin" ? "Sign in to your SoundLife clinic portal" : "Register — your MIS admin will approve access"}
+            </div>
           </div>
+
+          {/* Tab switcher */}
+          <div style={{display:"flex",background:"var(--bg3)",borderRadius:11,padding:4,marginBottom:22,border:"1px solid var(--border)"}}>
+            {["signin","register"].map(t=>(
+              <button key={t} onClick={()=>{setTab(t);setErr("");}} style={{flex:1,padding:"9px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:600,transition:"all 0.18s",
+                background: tab===t ? "var(--accent)" : "transparent",
+                color: tab===t ? "#fff" : "var(--muted)"}}>
+                {t==="signin" ? "Sign In" : "Register"}
+              </button>
+            ))}
+          </div>
+
           <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:18,padding:"30px",boxShadow:"var(--cardshadow)"}}>
-            <label style={S.label}>Username</label>
-            <input style={S.inp} value={u} onChange={e=>{setU(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="e.g. sl-shyamal" autoFocus autoComplete="username"/>
-            <label style={{...S.label,marginTop:16}}>Password</label>
-            <div style={{position:"relative"}}>
-              <input style={{...S.inp,paddingRight:44}} type={show?"text":"password"} value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Enter password" autoComplete="current-password"/>
-              <button onClick={()=>setShow(s=>!s)} style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:14,padding:4}}>{show?"🙈":"👁"}</button>
-            </div>
-            {err && <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{err}</div>}
-            <button className="btn-p" onClick={go} disabled={busy} style={{marginTop:20,width:"100%",padding:"13px",background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:11,color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 14px #7c3aed33"}}>
-              {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Verifying…</>:"Sign In →"}
-            </button>
-            <div style={{marginTop:20,padding:"12px 14px",background:"var(--accentbg)",borderRadius:9,border:"1px solid var(--border)",textAlign:"center"}}>
-              <div style={{fontSize:11,color:"var(--muted)"}}>For login credentials, contact your MIS administrator.</div>
-              <div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>Credentials are issued individually per clinic.</div>
-            </div>
+
+            {tab==="signin" && <>
+              <label style={S.label}>Username</label>
+              <input style={S.inp} value={u} onChange={e=>{setU(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="e.g. sl-shyamal" autoFocus autoComplete="username"/>
+              <label style={{...S.label,marginTop:16}}>Password</label>
+              <div style={{position:"relative"}}>
+                <input style={{...S.inp,paddingRight:44}} type={show?"text":"password"} value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Enter password" autoComplete="current-password"/>
+                <button onClick={()=>setShow(s=>!s)} style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:14,padding:4}}>{show?"🙈":"👁"}</button>
+              </div>
+              {err && <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{err}</div>}
+              <button className="btn-p" onClick={go} disabled={busy} style={{marginTop:20,width:"100%",padding:"13px",background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:11,color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 14px #7c3aed33"}}>
+                {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Verifying…</>:"Sign In →"}
+              </button>
+              <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+                <span style={{fontSize:11,color:"var(--muted)"}}>or</span>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              </div>
+              <button onClick={goGoogle} disabled={busy} style={{width:"100%",padding:"12px",background:"#fff",border:"1px solid #ddd",borderRadius:11,color:"#333",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px #00000012"}}>
+                <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.6-8 19.6-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 18.9 13 24 13c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7.1l-6.6 4.9C9.7 39.7 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.8l6.2 5.2C40.8 35.6 44 30.3 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
+                Continue with Google
+              </button>
+            </>}
+
+            {tab==="register" && <>
+              <label style={S.label}>Full Name</label>
+              <input style={S.inp} value={name} onChange={e=>{setName(e.target.value);setErr("");}} placeholder="Your full name" autoFocus/>
+              <label style={{...S.label,marginTop:14}}>Email Address</label>
+              <input style={S.inp} type="email" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} placeholder="yourname@example.com"/>
+              <label style={{...S.label,marginTop:14}}>Password</label>
+              <div style={{position:"relative"}}>
+                <input style={{...S.inp,paddingRight:44}} type={show?"text":"password"} value={rpw} onChange={e=>{setRpw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&goRegister()} placeholder="Minimum 6 characters"/>
+                <button onClick={()=>setShow(s=>!s)} style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:14,padding:4}}>{show?"🙈":"👁"}</button>
+              </div>
+              {err && <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{err}</div>}
+              <button className="btn-p" onClick={goRegister} disabled={busy} style={{marginTop:20,width:"100%",padding:"13px",background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:11,color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Creating account…</>:"Create Account →"}
+              </button>
+              <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+                <span style={{fontSize:11,color:"var(--muted)"}}>or register with</span>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              </div>
+              <button onClick={goGoogle} disabled={busy} style={{width:"100%",padding:"12px",background:"#fff",border:"1px solid #ddd",borderRadius:11,color:"#333",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px #00000012"}}>
+                <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.6-8 19.6-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 18.9 13 24 13c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7.1l-6.6 4.9C9.7 39.7 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.8l6.2 5.2C40.8 35.6 44 30.3 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
+                Continue with Google
+              </button>
+              <div style={{marginTop:16,padding:"10px 13px",background:"var(--accentbg)",borderRadius:9,border:"1px solid var(--border)",fontSize:11,color:"var(--muted)",textAlign:"center",lineHeight:1.6}}>
+                After registering, your MIS admin will assign your clinic access. You'll see a confirmation screen until then.
+              </div>
+            </>}
           </div>
-          <div style={{textAlign:"center",marginTop:22,fontSize:11,color:"var(--muted2)"}}>© {new Date().getFullYear()} SoundLife Speech & Hearing Clinic</div>
+
+          <div style={{textAlign:"center",marginTop:16}}>
+            <button onClick={()=>setShowSetup(true)} style={{background:"none",border:"none",fontSize:10,color:"var(--muted2)",cursor:"pointer",textDecoration:"underline"}}>
+              First Time Setup (MIS Admin only)
+            </button>
+          </div>
+          <div style={{textAlign:"center",marginTop:8,fontSize:11,color:"var(--muted2)"}}>&copy; {new Date().getFullYear()} SoundLife Speech &amp; Hearing Clinic</div>
         </div>
       </div>
     </div>
   );
-}
-
-// ══════════════════════════════════════════════════════════
+}// ══════════════════════════════════════════════════════════
 // SHELL
 // ══════════════════════════════════════════════════════════
 function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
@@ -411,23 +719,25 @@ function TopBar({ title, sub, actions }) {
 // MIS DASHBOARD
 // ══════════════════════════════════════════════════════════
 function MIS({ user, store, onLogout, theme, toggleTheme }) {
-  const [tab, setTab]=useState("overview"); const [selected,setSel]=useState(null); const [lightbox,setLb]=useState(null);
+  const [tab,setTab]=useState("overview"); const [selected,setSel]=useState(null); const [lightbox,setLb]=useState(null);
   const nav=[
-    {id:"overview",icon:"◈",label:"Overview",active:tab==="overview",onClick:()=>setTab("overview")},
-    {id:"search",icon:"⌕",label:"Search Patient",active:tab==="search",onClick:()=>setTab("search")},
-    {id:"all",icon:"☰",label:"All Patients",active:tab==="all",onClick:()=>setTab("all"),badge:store.patients.length},
-    {id:"gallery",icon:"⬚",label:"Records Gallery",active:tab==="gallery",onClick:()=>setTab("gallery")},
-    {id:"analytics",icon:"◉",label:"Analytics",active:tab==="analytics",onClick:()=>setTab("analytics")},
+    {id:"overview",  icon:"◈", label:"Overview",        active:tab==="overview",  onClick:()=>setTab("overview")},
+    {id:"search",    icon:"⌕", label:"Search Patient",  active:tab==="search",    onClick:()=>setTab("search")},
+    {id:"all",       icon:"☰", label:"All Patients",    active:tab==="all",       onClick:()=>setTab("all"), badge:store.patients.length},
+    {id:"gallery",   icon:"⬚", label:"Records Gallery", active:tab==="gallery",   onClick:()=>setTab("gallery")},
+    {id:"analytics", icon:"◉", label:"Analytics",       active:tab==="analytics", onClick:()=>setTab("analytics")},
+    {id:"audit",     icon:"🔒", label:"Audit Log",       active:tab==="audit",     onClick:()=>setTab("audit")},
   ];
   return (
     <Shell user={user} navItems={nav} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme}>
-      {tab==="overview"&&<MISOverview store={store} onSelect={setSel} setLb={setLb}/>}
-      {tab==="search"&&<SearchView store={store} onSelect={setSel} isMIS/>}
-      {tab==="all"&&<AllPatients store={store} onSelect={setSel}/>}
-      {tab==="gallery"&&<Gallery store={store} setLb={setLb}/>}
-      {tab==="analytics"&&<Analytics store={store}/>}
-      {selected&&<PatientModal p={selected} store={store} onClose={()=>setSel(null)} readOnly setLb={setLb}/>}
-      {lightbox&&<Lightbox {...lightbox} onClose={()=>setLb(null)}/>}
+      {tab==="overview"  && <MISOverview store={store} onSelect={setSel} setLb={setLb}/>}
+      {tab==="search"    && <SearchView  store={store} onSelect={setSel} isMIS user={user}/>}
+      {tab==="all"       && <AllPatients store={store} onSelect={setSel}/>}
+      {tab==="gallery"   && <Gallery     store={store} setLb={setLb}/>}
+      {tab==="analytics" && <Analytics   store={store}/>}
+      {tab==="audit"     && <AuditLog/>}
+      {selected && <PatientModal p={selected} store={store} onClose={()=>setSel(null)} readOnly setLb={setLb} user={user}/>}
+      {lightbox  && <Lightbox {...lightbox} onClose={()=>setLb(null)}/>}
     </Shell>
   );
 }
@@ -474,12 +784,77 @@ function MISOverview({ store, onSelect, setLb }) {
         </div>
         {recentImgs.length>0&&(
           <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"18px 20px",boxShadow:"var(--cardshadow)"}}>
-            <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:14}}>Latest Uploaded Records — Click to View Full Size</div>
+            <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:14}}>Latest Uploaded Records</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:10}}>
               {recentImgs.map(r=><RCard key={r.rid} r={r} onView={()=>setLb({src:r.data,name:r.name,patient:r.patient})}/>)}
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// AUDIT LOG VIEW — MIS only
+// ══════════════════════════════════════════════════════════
+function AuditLog() {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("ALL");
+
+  useEffect(() => {
+    const q = query(collection(db, "auditLogs"), orderBy("ts", "desc"), limit(500));
+    const unsub = onSnapshot(q, snap => {
+      setLogs(snap.docs.map(d => d.data()));
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  const ACTION_LABELS = {
+    LOGIN:           { label:"Login",            icon:"🔐", color:"#059669" },
+    LOGOUT:          { label:"Logout",           icon:"🚪", color:"#6d28d9" },
+    PATIENT_CREATED: { label:"Patient Added",    icon:"👤", color:"#7c3aed" },
+    RECORD_UPLOADED: { label:"Record Uploaded",  icon:"📎", color:"#0891b2" },
+    RECORD_DELETED:  { label:"Record Deleted",   icon:"🗑️", color:"#e84c3d" },
+    VISIT_LOGGED:    { label:"Visit Logged",     icon:"📝", color:"#d97706" },
+  };
+
+  const filtered = filter === "ALL" ? logs : logs.filter(l => l.action === filter);
+
+  return (
+    <div>
+      <TopBar title="Audit Log" sub="Every action by every user — last 500 entries"/>
+      <div className="main-pad" style={{padding:"22px 26px"}}>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
+          <FBtn active={filter==="ALL"} onClick={()=>setFilter("ALL")}>All Actions</FBtn>
+          {Object.entries(ACTION_LABELS).map(([k,v])=>(
+            <FBtn key={k} active={filter===k} onClick={()=>setFilter(k)}>{v.icon} {v.label}</FBtn>
+          ))}
+        </div>
+        <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,overflow:"hidden",boxShadow:"var(--cardshadow)"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 1fr 1.5fr 1.5fr",padding:"10px 18px",background:"var(--accentbg)",fontSize:9,fontWeight:700,color:"var(--muted)",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid var(--border)"}}>
+            <div>Time</div><div>User</div><div>Clinic</div><div>Action</div><div>Detail</div>
+          </div>
+          {loading && <div style={{padding:20,textAlign:"center",color:"var(--muted)",fontSize:12}}>Loading…</div>}
+          {!loading && filtered.length === 0 && <Empty msg="No audit entries yet"/>}
+          {filtered.map((l,i) => {
+            const al = ACTION_LABELS[l.action] || { label:l.action, icon:"•", color:"var(--muted)" };
+            const detail = l.detail?.patientName ? `Patient: ${l.detail.patientName}` :
+                           l.detail?.fileName    ? `File: ${l.detail.fileName}` :
+                           l.detail?.username    ? `User: ${l.detail.username}` : "—";
+            return (
+              <div key={i} className="row-hover" style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 1fr 1.5fr 1.5fr",padding:"10px 18px",borderTop:"1px solid var(--border)",fontSize:11,alignItems:"center"}}>
+                <div style={{color:"var(--muted)",fontSize:10}}>{new Date(l.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>
+                <div style={{fontWeight:600,color:"var(--text1)"}}>{l.username}</div>
+                <div><span style={{background:"#7c3aed18",color:"#7c3aed",padding:"2px 7px",borderRadius:5,fontSize:9,fontWeight:600}}>{l.clinicLabel?.split("·")[0]?.trim()||"MIS"}</span></div>
+                <div><span style={{background:al.color+"18",color:al.color,padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:600}}>{al.icon} {al.label}</span></div>
+                <div style={{color:"var(--muted)",fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -492,24 +867,23 @@ function Clinic({ user, store, onLogout, theme, toggleTheme }) {
   const [tab,setTab]=useState("home"); const [selected,setSel]=useState(null); const [lightbox,setLb]=useState(null);
   const myPts=store.patients.filter(p=>p.clinicId===user.clinic);
   const nav=[
-    {id:"home",icon:"⌂",label:"Home",active:tab==="home",onClick:()=>setTab("home")},
-    {id:"search",icon:"⌕",label:"Search Patient",active:tab==="search",onClick:()=>setTab("search")},
-    {id:"add",icon:"+",label:"Add Patient",active:tab==="add",onClick:()=>setTab("add")},
+    {id:"home",   icon:"⌂", label:"Home",           active:tab==="home",   onClick:()=>setTab("home")},
+    {id:"search", icon:"⌕", label:"Search Patient",  active:tab==="search", onClick:()=>setTab("search")},
+    {id:"add",    icon:"+", label:"Add Patient",     active:tab==="add",    onClick:()=>setTab("add")},
   ];
   return (
     <Shell user={user} navItems={nav} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme}>
-      {tab==="home"&&<ClinicHome user={user} myPts={myPts} onAdd={()=>setTab("add")} onSearch={()=>setTab("search")}/>}
-      {tab==="search"&&<SearchView store={store} onSelect={setSel} clinicId={user.clinic}/>}
-      {tab==="add"&&<AddPatient user={user} store={store} onDone={()=>setTab("home")} onCancel={()=>setTab("home")}/>}
-      {selected&&<PatientModal p={selected} store={store} onClose={()=>setSel(null)} setLb={setLb} currentClinicId={user.clinic}/>}
-      {lightbox&&<Lightbox {...lightbox} onClose={()=>setLb(null)}/>}
+      {tab==="home"   && <ClinicHome user={user} myPts={myPts} onAdd={()=>setTab("add")} onSearch={()=>setTab("search")}/>}
+      {tab==="search" && <SearchView store={store} onSelect={setSel} clinicId={user.clinic} user={user}/>}
+      {tab==="add"    && <AddPatient user={user} store={store} onDone={()=>setTab("home")} onCancel={()=>setTab("home")}/>}
+      {selected && <PatientModal p={selected} store={store} onClose={()=>setSel(null)} setLb={setLb} currentClinicId={user.clinic} user={user}/>}
+      {lightbox  && <Lightbox {...lightbox} onClose={()=>setLb(null)}/>}
     </Shell>
   );
 }
 
 function ClinicHome({ user, myPts, onAdd, onSearch }) {
-  const acl="#7c3aed";
-  const c=CLINICS[user.clinic];
+  const acl="#7c3aed"; const c=CLINICS[user.clinic];
   const totalRec=myPts.reduce((a,p)=>a+(p.records?.length||0),0);
   const today=myPts.filter(p=>new Date(p.createdAt).toDateString()===new Date().toDateString()).length;
   const thisMonth=myPts.filter(p=>{const d=new Date(p.createdAt);const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();}).length;
@@ -543,7 +917,7 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             {[["1","New Patient","Click 'Register New Patient'. Fill in name, phone, age. A case code like SHY-123456 is auto-generated."],
               ["2","Upload Records","Search the patient, open their profile, go to 'Records' tab and upload diagnosis images or reports."],
-              ["3","Return Visit","When patient returns, search by their phone number or case code — works across all clinics."],
+              ["3","Return Visit","When patient returns, search by phone or case code — works across all SoundLife clinics."],
               ["4","Log Visits","In the patient profile, use the 'Visits' tab to log notes for each consultation."],
             ].map(([n,t,d])=>(
               <div key={n} style={{background:"var(--accentbg)",borderRadius:10,padding:"12px 14px",border:"1px solid var(--border)"}}>
@@ -569,22 +943,22 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
 // ══════════════════════════════════════════════════════════
 // SEARCH VIEW
 // ══════════════════════════════════════════════════════════
-function SearchView({ store, onSelect, isMIS, clinicId }) {
+function SearchView({ store, onSelect, isMIS, clinicId, user }) {
   const [q,setQ]=useState(""); const [type,setType]=useState("phone"); const [res,setRes]=useState(null);
   const [inlineLog,setInlineLog]=useState({}); const [logDone,setLogDone]=useState({});
   const run=()=>{
     if(!q.trim())return;
     const r=type==="phone"?store.searchPhone(q.trim()):type==="code"?store.searchCode(q.trim()):store.searchName(q.trim());
-    setRes(r); setInlineLog({}); setLogDone({});
+    setRes(r);setInlineLog({});setLogDone({});
   };
   const submitLog=async(pid)=>{
-    const note=(inlineLog[pid]||"").trim(); if(!note)return;
-    await store.addVisit(pid,{note,clinicId:store.patients.find(x=>x.id===pid)?.clinicId||clinicId});
-    setLogDone(x=>({...x,[pid]:true})); setInlineLog(x=>({...x,[pid]:""}));
+    const note=(inlineLog[pid]||"").trim();if(!note)return;
+    await store.addVisit(pid,{note,clinicId:store.patients.find(x=>x.id===pid)?.clinicId||clinicId},user);
+    setLogDone(x=>({...x,[pid]:true}));setInlineLog(x=>({...x,[pid]:""}));
   };
   return (
     <div>
-      <TopBar title={isMIS?"Global Search":"Search Patient"} sub={isMIS?"Search across all 24 clinics":"Search across all clinics — view history, add records & log visits"}/>
+      <TopBar title={isMIS?"Global Search":"Search Patient"} sub="Search across all clinics"/>
       <div className="main-pad" style={{padding:"22px 26px",maxWidth:700}}>
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"22px",boxShadow:"var(--cardshadow)"}}>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
@@ -648,7 +1022,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
   const submit=async()=>{
     const e=validate();if(Object.keys(e).length){setErrs(e);return;}
     const existing=store.findByPhoneGlobal(f.phone);if(existing.length>0){setDupPatient(existing[0]);return;}
-    setBusy(true);const p=await store.addPatient({...f,clinicId:user.clinic});setBusy(false);setSuccess(p);
+    setBusy(true);const p=await store.addPatient({...f,clinicId:user.clinic},user);setBusy(false);setSuccess(p);
   };
   if(success)return(
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
@@ -675,7 +1049,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
               <div style={{fontSize:22}}>⚠️</div>
               <div>
                 <div style={{fontWeight:700,fontSize:14,color:"#c2410c"}}>Entry already exists for this number</div>
-                <div style={{fontSize:12,color:"#9a3412",marginTop:2}}>A patient with mobile <strong>{dupPatient.phone}</strong> was registered at <strong>{CLINICS[dupPatient.clinicId]?.label}</strong> ({CLINICS[dupPatient.clinicId]?.city}).</div>
+                <div style={{fontSize:12,color:"#9a3412",marginTop:2}}>Registered at <strong>{CLINICS[dupPatient.clinicId]?.label}</strong> ({CLINICS[dupPatient.clinicId]?.city}).</div>
               </div>
             </div>
             <div style={{background:"var(--card)",border:"1px solid #fed7aa",borderRadius:10,padding:"12px 15px",marginBottom:14}}>
@@ -689,10 +1063,10 @@ function AddPatient({ user, store, onDone, onCancel }) {
               <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>{dupPatient.records?.length||0} records · {dupPatient.visits?.length||0} visits · Registered {new Date(dupPatient.createdAt).toLocaleDateString("en-IN")}</div>
               {!dupLogDone?(
                 <div>
-                  <div style={{fontSize:11,fontWeight:700,color:"var(--text2)",marginBottom:6}}>📝 Add a Visit Log for Today's Visit</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"var(--text2)",marginBottom:6}}>📝 Log today's visit for this patient</div>
                   <div style={{display:"flex",gap:8}}>
                     <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
-                    <button className="btn-p" onClick={async()=>{if(!dupNote.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic});setDupNote("");setDupLogDone(true);}}
+                    <button className="btn-p" onClick={async()=>{if(!dupNote.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic},user);setDupNote("");setDupLogDone(true);}}
                       style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log Visit</button>
                   </div>
                 </div>
@@ -789,7 +1163,7 @@ function AllPatients({ store, onSelect }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// GALLERY (MIS)
+// GALLERY
 // ══════════════════════════════════════════════════════════
 function Gallery({ store, setLb }) {
   const [cf,setCf]=useState("all");
@@ -812,7 +1186,7 @@ function Gallery({ store, setLb }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// ANALYTICS (MIS)
+// ANALYTICS
 // ══════════════════════════════════════════════════════════
 function Analytics({ store }) {
   const total=store.patients.length; const totalRec=store.patients.reduce((a,p)=>a+(p.records?.length||0),0);
@@ -866,7 +1240,7 @@ function Analytics({ store }) {
         </div>
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"20px",boxShadow:"var(--cardshadow)"}}>
           <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:16}}>📣 Patient Source Breakdown</div>
-          {sourceCounts.length===0&&<Empty msg="No source data yet — start collecting when registering patients"/>}
+          {sourceCounts.length===0&&<Empty msg="No source data yet"/>}
           {sourceCounts.map(({s,count})=>(
             <div key={s} style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
@@ -888,13 +1262,13 @@ function Analytics({ store }) {
 // ══════════════════════════════════════════════════════════
 // PATIENT MODAL
 // ══════════════════════════════════════════════════════════
-function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
+function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, user }) {
   const [tab,setTab]=useState("info"); const [note,setNote]=useState(""); const fileRef=useRef(); const [busy,setBusy]=useState(false);
   const live=store.patients.find(x=>x.id===p.id)||p; const c=CLINICS[live.clinicId]; const acl="#7c3aed";
   const upload=async(e)=>{
     const files=Array.from(e.target.files);if(!files.length)return;
     setBusy(true);
-    for(const f of files){await store.addRecord(live.id,{type:f.type.startsWith("image/")?"image":"document",name:f.name,file:f});}
+    for(const f of files){await store.addRecord(live.id,{type:f.type.startsWith("image/")?"image":"document",name:f.name,file:f},user);}
     setBusy(false);
   };
   return (
@@ -933,14 +1307,16 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
               ))}
               <div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px",borderLeft:"3px solid #7c3aed"}}>
                 <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:4}}>📣 Patient Source</div>
-                <div style={{fontSize:13,fontWeight:600,color:live.source?"var(--accent)":"var(--muted)",marginTop:2}}>
+                <div style={{fontSize:13,fontWeight:600,color:live.source?"var(--accent)":"var(--muted)"}}>
                   {live.source||<span style={{fontStyle:"italic",fontWeight:400}}>Not recorded</span>}
                 </div>
               </div>
-              {live.notes&&(<div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px"}}>
-                <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:5}}>Initial Notes</div>
-                <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>{live.notes}</div>
-              </div>)}
+              {live.notes&&(
+                <div style={{gridColumn:"1/-1",background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px"}}>
+                  <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:5}}>Initial Notes</div>
+                  <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>{live.notes}</div>
+                </div>
+              )}
             </div>
           )}
           {tab==="records"&&(
@@ -948,7 +1324,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
               {!readOnly&&(
                 <div style={{marginBottom:14}}>
                   <button className="btn-p" onClick={()=>fileRef.current.click()} disabled={busy} style={{...S.btn,background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",cursor:busy?"not-allowed":"pointer"}}>
-                    {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Uploading to Cloudinary…</>:"📎 Upload Image / Report"}
+                    {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Uploading…</>:"📎 Upload Image / Report"}
                   </button>
                   <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple style={{display:"none"}} onChange={upload}/>
                 </div>
@@ -962,7 +1338,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
                       <div style={{fontSize:10,fontWeight:600,color:"var(--text1)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</div>
                       <div style={{fontSize:9,color:"var(--muted2)",marginTop:2}}>{new Date(r.ts).toLocaleDateString("en-IN")}</div>
                     </div>
-                    {!readOnly&&<button onClick={e=>{e.stopPropagation();store.deleteRecord(live.id,r.rid);}} style={{width:"100%",padding:"5px",background:"#fef2f2",border:"none",borderTop:"1px solid var(--border)",color:"#dc2626",fontSize:10,cursor:"pointer"}}>Remove</button>}
+                    {!readOnly&&<button onClick={e=>{e.stopPropagation();store.deleteRecord(live.id,r.rid,user);}} style={{width:"100%",padding:"5px",background:"#fef2f2",border:"none",borderTop:"1px solid var(--border)",color:"#dc2626",fontSize:10,cursor:"pointer"}}>Remove</button>}
                   </div>
                 ))}
               </div>
@@ -973,7 +1349,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
               {!readOnly&&(
                 <div style={{display:"flex",gap:8,marginBottom:14}}>
                   <textarea style={{...S.inp,flex:1,minHeight:54,resize:"vertical"}} placeholder="Log visit note…" value={note} onChange={e=>setNote(e.target.value)}/>
-                  <button className="btn-p" onClick={async()=>{if(!note.trim())return;await store.addVisit(live.id,{note,clinicId:currentClinicId||live.clinicId});setNote("");}} style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
+                  <button className="btn-p" onClick={async()=>{if(!note.trim())return;await store.addVisit(live.id,{note,clinicId:currentClinicId||live.clinicId},user);setNote("");}} style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
                 </div>
               )}
               {(!live.visits||live.visits.length===0)&&<Empty msg="No visit logs yet"/>}
@@ -981,7 +1357,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId }) {
                 <div key={v.vid} style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"11px 14px",marginBottom:8}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5,flexWrap:"wrap",gap:4}}>
                     <div style={{fontSize:9,color:"var(--muted2)"}}>{new Date(v.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
-                    {v.clinicId&&CLINICS[v.clinicId]&&(<div style={{background:CLINICS[v.clinicId].color+"18",color:CLINICS[v.clinicId].color,padding:"2px 8px",borderRadius:5,fontSize:9,fontWeight:700,letterSpacing:0.4}}>🏥 {CLINICS[v.clinicId].label} · {CLINICS[v.clinicId].city}</div>)}
+                    {v.clinicId&&CLINICS[v.clinicId]&&(<div style={{background:CLINICS[v.clinicId].color+"18",color:CLINICS[v.clinicId].color,padding:"2px 8px",borderRadius:5,fontSize:9,fontWeight:700}}>🏥 {CLINICS[v.clinicId].label} · {CLINICS[v.clinicId].city}</div>)}
                   </div>
                   <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>{v.note}</div>
                 </div>
@@ -1028,7 +1404,7 @@ function Lightbox({ src, name, patient, onClose }) {
   );
 }
 
-// ─── ATOMS ────────────────────────────────────────────────────────────────────
+// ─── ATOMS ────────────────────────────────────────────────
 function SLogo({ white }) {
   const BAR_COLORS=["#43a047","#66bb6a","#ffa726","#ef5350","#e53935","#ef5350","#ffa726","#66bb6a","#43a047","#66bb6a"];
   return (
