@@ -8,8 +8,15 @@ import {
 import {
   getAuth, signInWithEmailAndPassword, signOut,
   onAuthStateChanged, createUserWithEmailAndPassword,
-  GoogleAuthProvider, signInWithPopup
 } from "firebase/auth";
+
+/* ══════════════════════════════════════════════════════════
+   SOUNDLIFE CMS v5.1
+   - No Google login (removed)
+   - Register tab kept for non-clinic staff (MIS assigns role)
+   - Edit Patient details
+   - Export to Excel (XLSX) and PDF — MIS only (removed from clinic level)
+   ══════════════════════════════════════════════════════════ */
 
 const firebaseConfig = {
   apiKey:            "AIzaSyAMMAEo_PygPUZy66a1w542lIpA8hF3mAM",
@@ -27,11 +34,13 @@ const app  = initializeApp(firebaseConfig);
 const db   = getFirestore(app);
 const auth = getAuth(app);
 
+// ── Fonts ──────────────────────────────────────────────────
 const fontLink = document.createElement("link");
 fontLink.rel = "stylesheet";
 fontLink.href = "https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap";
 document.head.appendChild(fontLink);
 
+// ── Global styles ──────────────────────────────────────────
 const styleEl = document.createElement("style");
 styleEl.textContent = `
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -79,9 +88,126 @@ styleEl.textContent = `
     .main-pad{padding:14px !important;}.grid-3{grid-template-columns:1fr !important;}
     .grid-2{grid-template-columns:1fr !important;}.table-row{grid-template-columns:1fr 1fr !important;}
   }
+  @media print {
+    body { background: white !important; }
+    .no-print { display: none !important; }
+  }
 `;
 document.head.appendChild(styleEl);
 
+// ── SheetJS for Excel export ───────────────────────────────
+function loadSheetJS() {
+  return new Promise((resolve) => {
+    if (window.XLSX) { resolve(window.XLSX); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload = () => resolve(window.XLSX);
+    document.head.appendChild(s);
+  });
+}
+
+// ── jsPDF for PDF export ───────────────────────────────────
+function loadJsPDF() {
+  return new Promise((resolve) => {
+    if (window.jspdf) { resolve(window.jspdf.jsPDF); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload = () => {
+      const s2 = document.createElement("script");
+      s2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+      s2.onload = () => resolve(window.jspdf.jsPDF);
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s);
+  });
+}
+
+// ── Export helpers ─────────────────────────────────────────
+async function exportToExcel(patients, filename = "SoundLife_Patients") {
+  const XLSX = await loadSheetJS();
+  const rows = patients.map(p => ({
+    "Case Code":       p.id,
+    "Full Name":       p.name,
+    "Mobile":          p.phone,
+    "Age":             p.age,
+    "Gender":          p.gender || "",
+    "Blood Group":     p.bloodGroup || "",
+    "Address":         p.address || "",
+    "Clinic":          CLINICS[p.clinicId]?.label || p.clinicId,
+    "City":            CLINICS[p.clinicId]?.city || "",
+    "Region":          CLINICS[p.clinicId]?.region || "",
+    "Source":          p.source || "",
+    "Records":         p.records?.length || 0,
+    "Visits":          p.visits?.length || 0,
+    "Registered On":   new Date(p.createdAt).toLocaleDateString("en-IN"),
+    "Initial Notes":   p.notes || "",
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = [
+    {wch:14},{wch:22},{wch:14},{wch:6},{wch:8},{wch:10},
+    {wch:22},{wch:18},{wch:14},{wch:12},{wch:24},{wch:8},{wch:8},{wch:14},{wch:36}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Patients");
+  XLSX.writeFile(wb, `${filename}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+async function exportToPDF(patients, title = "SoundLife Patient Report") {
+  const JsPDF = await loadJsPDF();
+  const doc = new JsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+  doc.setFillColor(124, 58, 237);
+  doc.rect(0, 0, 297, 18, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13);
+  doc.setFont("helvetica", "bold");
+  doc.text("SoundLife Speech & Hearing Clinic", 14, 8);
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.text(title, 14, 14);
+  doc.text(`Generated: ${new Date().toLocaleDateString("en-IN", {day:"numeric",month:"long",year:"numeric"})}`, 230, 14);
+
+  doc.autoTable({
+    startY: 22,
+    head: [["Code","Name","Mobile","Age","Gender","Blood","Clinic","City","Source","Records","Visits","Registered"]],
+    body: patients.map(p => [
+      p.id,
+      p.name,
+      p.phone,
+      p.age || "—",
+      p.gender || "—",
+      p.bloodGroup || "—",
+      CLINICS[p.clinicId]?.label || p.clinicId,
+      CLINICS[p.clinicId]?.city || "—",
+      p.source || "—",
+      p.records?.length || 0,
+      p.visits?.length || 0,
+      new Date(p.createdAt).toLocaleDateString("en-IN"),
+    ]),
+    headStyles: { fillColor: [109, 40, 217], textColor: 255, fontSize: 7, fontStyle: "bold" },
+    bodyStyles: { fontSize: 7, textColor: [30, 27, 75] },
+    alternateRowStyles: { fillColor: [237, 233, 254] },
+    columnStyles: {
+      0: {cellWidth:22}, 1: {cellWidth:30}, 2: {cellWidth:22},
+      3: {cellWidth:10}, 4: {cellWidth:14}, 5: {cellWidth:14},
+      6: {cellWidth:26}, 7: {cellWidth:20}, 8: {cellWidth:30},
+      9: {cellWidth:14}, 10: {cellWidth:10}, 11: {cellWidth:20},
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(150);
+    doc.text(`Page ${i} of ${pageCount} · SoundLife CMS · Confidential`, 14, doc.internal.pageSize.height - 5);
+  }
+
+  doc.save(`${title.replace(/ /g,"_")}_${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
+// ── Constants ──────────────────────────────────────────────
 const QUOTES = [
   { q:"I told my hearing aid it needed to listen more carefully. It said it didn't hear the complaint.", a:"— Sound Advice" },
   { q:"Life is too short to say 'What?' twice. Come on in.", a:"— SoundLife Clinics" },
@@ -188,17 +314,14 @@ async function writeAudit(user, action, detail = {}) {
       name:        user.name,
       clinicId:    user.clinic || "mis",
       clinicLabel: user.clinicLabel,
-      action,
-      detail,
+      action, detail,
       ts: new Date().toISOString(),
     });
-  } catch(e) {
-    console.warn("Audit log failed:", e);
-  }
+  } catch(e) { console.warn("Audit log failed:", e); }
 }
 
 // ══════════════════════════════════════════════════════════
-// FIREBASE STORE
+// STORE
 // ══════════════════════════════════════════════════════════
 function useStore() {
   const [patients, setPatients] = useState([]);
@@ -208,10 +331,7 @@ function useStore() {
     const unsub = onSnapshot(collection(db, "patients"), snap => {
       setPatients(snap.docs.map(d => ({ ...d.data(), _docId: d.id })));
       setLoading(false);
-    }, err => {
-      console.error("Firestore error:", err);
-      setLoading(false);
-    });
+    }, err => { console.error("Firestore:", err); setLoading(false); });
     return unsub;
   }, []);
 
@@ -222,6 +342,15 @@ function useStore() {
     return { ...p, _docId: ref.id };
   };
 
+  const editPatient = async (pid, updates, user) => {
+    const patient = patients.find(p => p.id === pid);
+    if (!patient) return;
+    const allowed = ["name","phone","age","gender","address","bloodGroup","source","notes"];
+    const clean = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
+    await updateDoc(doc(db, "patients", patient._docId), clean);
+    await writeAudit(user, "PATIENT_EDITED", { patientId:pid, patientName:patient.name, fields:Object.keys(clean) });
+  };
+
   const addRecord = async (pid, r, user) => {
     const patient = patients.find(p => p.id === pid);
     if (!patient) return;
@@ -229,7 +358,7 @@ function useStore() {
     if (r.file) { dataUrl = await uploadToCloudinary(r.file); }
     const record = { type:r.type, name:r.name, data:dataUrl, ts:new Date().toISOString(), rid:Date.now().toString() };
     await updateDoc(doc(db, "patients", patient._docId), { records: arrayUnion(record) });
-    await writeAudit(user, "RECORD_UPLOADED", { patientId:pid, fileName:r.name, fileType:r.type });
+    await writeAudit(user, "RECORD_UPLOADED", { patientId:pid, fileName:r.name });
   };
 
   const deleteRecord = async (pid, rid, user) => {
@@ -249,16 +378,16 @@ function useStore() {
     await writeAudit(user, "VISIT_LOGGED", { patientId:pid, patientName:patient.name });
   };
 
-  const searchPhone       = (q) => patients.filter(p => p.phone.includes(q));
-  const searchCode        = (q) => patients.filter(p => p.id.toLowerCase().includes(q.toLowerCase()));
-  const searchName        = (q) => patients.filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+  const searchPhone       = (q) => patients.filter(p => p.phone?.includes(q));
+  const searchCode        = (q) => patients.filter(p => p.id?.toLowerCase().includes(q.toLowerCase()));
+  const searchName        = (q) => patients.filter(p => p.name?.toLowerCase().includes(q.toLowerCase()));
   const findByPhoneGlobal = (phone) => patients.filter(p => p.phone === phone.trim());
 
-  return { patients, loading, addPatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName, findByPhoneGlobal };
+  return { patients, loading, addPatient, editPatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName, findByPhoneGlobal };
 }
 
 // ══════════════════════════════════════════════════════════
-// ROOT — FIXED AUTH FLOW
+// ROOT
 // ══════════════════════════════════════════════════════════
 export default function App() {
   const [user,      setUser]      = useState(null);
@@ -270,137 +399,59 @@ export default function App() {
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) {
-        setUser(null);
-        setPending(false);
-        setAuthReady(true);
-        return;
-      }
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) { setUser(null); setPending(false); setAuthReady(true); return; }
 
-      // ── FIX 1: Check USER_META by email first (fast path for known clinic accounts) ──
-      const emailLower = firebaseUser.email?.toLowerCase();
-      const metaEntry = Object.entries(USER_META).find(
-        ([, m]) => m.email.toLowerCase() === emailLower
-      );
+      const emailLower = fbUser.email?.toLowerCase();
+      const metaEntry = Object.entries(USER_META).find(([, m]) => m.email.toLowerCase() === emailLower);
 
       if (metaEntry) {
         const [username, meta] = metaEntry;
-        // Known clinic/mis account — use USER_META directly, no pending
-        setUser({
-          uid:         firebaseUser.uid,
-          email:       firebaseUser.email,
-          name:        meta.name,
-          role:        meta.role,
-          clinic:      meta.clinic || null,
-          clinicLabel: meta.clinicLabel,
-          username,
-        });
+        setUser({ uid:fbUser.uid, email:fbUser.email, name:meta.name, role:meta.role, clinic:meta.clinic||null, clinicLabel:meta.clinicLabel, username });
         setPending(false);
         setAuthReady(true);
-
-        // Also upsert a userProfiles doc so MIS can see them in Firestore
         try {
-          const profileRef = doc(db, "userProfiles", firebaseUser.uid);
-          const snap = await getDoc(profileRef);
-          if (!snap.exists()) {
-            await setDoc(profileRef, {
-              email:       firebaseUser.email,
-              name:        meta.name,
-              role:        meta.role,
-              clinic:      meta.clinic || "",
-              clinicLabel: meta.clinicLabel,
-              username,
-              createdAt:   new Date().toISOString(),
-            });
-          }
-        } catch(e) {
-          // Non-fatal — profile write failure doesn't block login
-          console.warn("Profile upsert failed:", e);
-        }
+          const ref = doc(db, "userProfiles", fbUser.uid);
+          const snap = await getDoc(ref);
+          if (!snap.exists()) await setDoc(ref, { email:fbUser.email, name:meta.name, role:meta.role, clinic:meta.clinic||"", clinicLabel:meta.clinicLabel, username, createdAt:new Date().toISOString() });
+        } catch(e) { console.warn("Profile upsert:", e); }
         return;
       }
 
-      // ── FIX 2: Unknown email (Google sign-in or self-registered user) ──
-      // Check Firestore for an assigned role
       try {
-        const profileRef = doc(db, "userProfiles", firebaseUser.uid);
-        const snap = await getDoc(profileRef);
-
+        const ref = doc(db, "userProfiles", fbUser.uid);
+        const snap = await getDoc(ref);
         if (snap.exists()) {
           const profile = snap.data();
           if (profile.role && profile.role !== "") {
-            setUser({
-              uid:         firebaseUser.uid,
-              email:       firebaseUser.email,
-              name:        profile.name || firebaseUser.displayName || firebaseUser.email,
-              role:        profile.role,
-              clinic:      profile.clinic || null,
-              clinicLabel: profile.clinicLabel || "All Clinics",
-              username:    profile.username || firebaseUser.email,
-            });
+            setUser({ uid:fbUser.uid, email:fbUser.email, name:profile.name||fbUser.email, role:profile.role, clinic:profile.clinic||null, clinicLabel:profile.clinicLabel||"All Clinics", username:profile.username||fbUser.email });
             setPending(false);
-          } else {
-            // Profile exists but role not assigned yet
-            setUser(null);
-            setPending(true);
-          }
+          } else { setUser(null); setPending(true); }
         } else {
-          // Brand new Google/email user — create blank profile, wait for admin
-          await setDoc(profileRef, {
-            email:     firebaseUser.email,
-            name:      firebaseUser.displayName || firebaseUser.email,
-            role:      "",
-            clinic:    "",
-            clinicLabel: "",
-            createdAt: new Date().toISOString(),
-          });
-          setUser(null);
-          setPending(true);
+          await setDoc(ref, { email:fbUser.email, name:fbUser.email, role:"", clinic:"", clinicLabel:"", createdAt:new Date().toISOString() });
+          setUser(null); setPending(true);
         }
-      } catch(e) {
-        console.error("Profile fetch error:", e);
-        setUser(null);
-        setPending(false);
-      }
-
+      } catch(e) { console.error("Profile fetch:", e); setUser(null); setPending(false); }
       setAuthReady(true);
     });
     return unsub;
   }, []);
 
-  // ── LOGIN: username → look up email in USER_META → Firebase Auth ──
   const login = async (username, password) => {
     const meta = USER_META[username.trim()];
-    if (!meta) return "Invalid username. Check spelling (e.g. sl-mis, sl-shyamal).";
+    if (!meta) return "Invalid username. Try sl-mis, sl-shyamal, etc.";
     try {
       await signInWithEmailAndPassword(auth, meta.email, password);
-      // writeAudit is called after onAuthStateChanged sets user
       return null;
     } catch(e) {
-      console.error("Login error:", e.code, e.message);
-      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" || e.code === "auth/invalid-login-credentials") {
+      console.error("Login:", e.code);
+      if (["auth/wrong-password","auth/invalid-credential","auth/invalid-login-credentials"].includes(e.code))
         return "Incorrect password. Please try again.";
-      }
-      if (e.code === "auth/user-not-found") {
-        return "Account not found. Run First Time Setup first (MIS admin only).";
-      }
-      if (e.code === "auth/too-many-requests") {
-        return "Too many attempts. Please wait a few minutes and try again.";
-      }
+      if (e.code === "auth/user-not-found")
+        return "Account not found in Firebase. Run First Time Setup.";
+      if (e.code === "auth/too-many-requests")
+        return "Too many attempts. Wait a few minutes.";
       return `Login failed: ${e.message}`;
-    }
-  };
-
-  const loginWithGoogle = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      return null;
-    } catch(e) {
-      console.error("Google login error:", e.code, e.message);
-      if (e.code === "auth/popup-closed-by-user") return "Sign-in popup was closed. Please try again.";
-      return "Google sign-in failed. Please try again.";
     }
   };
 
@@ -409,7 +460,7 @@ export default function App() {
       await createUserWithEmailAndPassword(auth, email, password);
       return null;
     } catch(e) {
-      if (e.code === "auth/email-already-in-use") return "This email is already registered.";
+      if (e.code === "auth/email-already-in-use") return "Email already registered.";
       if (e.code === "auth/weak-password") return "Password must be at least 6 characters.";
       return "Registration failed. Please try again.";
     }
@@ -418,13 +469,11 @@ export default function App() {
   const logout = async () => {
     if (user) await writeAudit(user, "LOGOUT", {});
     await signOut(auth);
-    setUser(null);
-    setPending(false);
+    setUser(null); setPending(false);
   };
 
   const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
 
-  // ── LOADING ──
   if (!authReady || store.loading) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:16}}>
       <SLogo/>
@@ -436,7 +485,7 @@ export default function App() {
   );
 
   if (pending) return <PendingApproval onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
-  if (!user)   return <Login onLogin={login} onGoogleLogin={loginWithGoogle} onRegister={registerWithEmail} theme={theme} toggleTheme={toggleTheme}/>;
+  if (!user)   return <Login onLogin={login} onRegister={registerWithEmail} theme={theme} toggleTheme={toggleTheme}/>;
   if (user.role === "mis") return <MIS user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
   return <Clinic user={user} store={store} onLogout={logout} theme={theme} toggleTheme={toggleTheme}/>;
 }
@@ -451,31 +500,25 @@ function FirstTimeSetup({ onClose }) {
 
   const run = async () => {
     setRunning(true);
-    const entries = Object.entries(USER_META).filter(([u]) => u !== "sl-mis");
-    for (const [username, meta] of entries) {
+    for (const [username, meta] of Object.entries(USER_META).filter(([u]) => u !== "sl-mis")) {
       try {
         await createUserWithEmailAndPassword(auth, meta.email, meta.initPwd);
         setLog(l => [...l, { ok:true, msg:`✅ ${username} created` }]);
       } catch(e) {
-        if (e.code === "auth/email-already-in-use") {
-          setLog(l => [...l, { ok:true, msg:`⏭ ${username} already exists — skipped` }]);
-        } else {
-          setLog(l => [...l, { ok:false, msg:`❌ ${username} failed: ${e.code}` }]);
-        }
+        if (e.code === "auth/email-already-in-use")
+          setLog(l => [...l, { ok:true, msg:`⏭ ${username} already exists` }]);
+        else
+          setLog(l => [...l, { ok:false, msg:`❌ ${username}: ${e.code}` }]);
       }
     }
-    setDone(true);
-    setRunning(false);
+    setDone(true); setRunning(false);
   };
 
   return (
     <div className="fadeIn" style={{position:"fixed",inset:0,background:"#00000077",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(6px)"}}>
       <div style={{background:"var(--card)",borderRadius:18,padding:30,maxWidth:520,width:"100%",border:"1px solid var(--cardborder)",boxShadow:"0 32px 80px #00000040"}}>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:"var(--text1)",marginBottom:6}}>First Time Setup</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:20,lineHeight:1.6}}>
-          Creates all 24 clinic accounts in Firebase Auth.<br/>
-          <strong style={{color:"var(--accent)"}}>Run this ONCE only.</strong>
-        </div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:20,lineHeight:1.6}}>Creates all 24 clinic accounts in Firebase Auth. <strong style={{color:"var(--accent)"}}>Run once only.</strong></div>
         {!running && !done && (
           <div style={{display:"flex",gap:10}}>
             <button className="btn-p" onClick={run} style={S.btn}>▶ Run Setup Now</button>
@@ -484,15 +527,13 @@ function FirstTimeSetup({ onClose }) {
         )}
         {(running || log.length > 0) && (
           <div style={{background:"var(--bg)",borderRadius:10,padding:14,marginTop:16,maxHeight:280,overflow:"auto",fontSize:11,fontFamily:"monospace",border:"1px solid var(--border)"}}>
-            {log.map((l,i)=><div key={i} style={{color:l.ok?"var(--green)":"var(--danger)",marginBottom:3}}>{l.msg}</div>)}
+            {log.map((l,i) => <div key={i} style={{color:l.ok?"var(--green)":"var(--danger)",marginBottom:3}}>{l.msg}</div>)}
             {running && <div style={{color:"var(--muted)",marginTop:4}}>Working…</div>}
           </div>
         )}
         {done && (
           <div style={{marginTop:16}}>
-            <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:9,padding:"10px 14px",fontSize:12,color:"#15803d",fontWeight:600,marginBottom:12}}>
-              ✅ Setup complete! All clinic accounts are ready.
-            </div>
+            <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:9,padding:"10px 14px",fontSize:12,color:"#15803d",fontWeight:600,marginBottom:12}}>✅ All clinic accounts ready!</div>
             <button onClick={onClose} style={S.btn}>Close</button>
           </div>
         )}
@@ -506,7 +547,7 @@ function FirstTimeSetup({ onClose }) {
 // ══════════════════════════════════════════════════════════
 function PendingApproval({ onLogout, theme, toggleTheme }) {
   return (
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",flexDirection:"column",gap:0,padding:24}}>
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",padding:24}}>
       <button onClick={toggleTheme} style={{position:"fixed",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)"}}>
         {theme==="light"?"🌙 Dark":"☀️ Light"}
       </button>
@@ -515,11 +556,10 @@ function PendingApproval({ onLogout, theme, toggleTheme }) {
         <SLogo/>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:"var(--text1)",marginTop:22,marginBottom:10}}>Waiting for Approval</div>
         <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.7,marginBottom:28}}>
-          Your account has been created.<br/>
-          Please wait for your <strong style={{color:"var(--accent)"}}>MIS Admin</strong> to assign your clinic access.
+          Account created! Your <strong style={{color:"var(--accent)"}}>MIS Admin</strong> needs to assign your clinic access in Firestore.
         </div>
         <div style={{background:"var(--accentbg)",border:"1px solid var(--border)",borderRadius:11,padding:"12px 16px",fontSize:12,color:"var(--muted)",marginBottom:24}}>
-          📧 Contact your admin if this takes too long.
+          📧 Contact admin: jaydaiya10@gmail.com
         </div>
         <button onClick={onLogout} style={{background:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"12px 32px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
           Sign Out
@@ -532,7 +572,7 @@ function PendingApproval({ onLogout, theme, toggleTheme }) {
 // ══════════════════════════════════════════════════════════
 // LOGIN
 // ══════════════════════════════════════════════════════════
-function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
+function Login({ onLogin, onRegister, theme, toggleTheme }) {
   const [tab,   setTab]  = useState("signin");
   const [u,     setU]    = useState("");
   const [pw,    setPw]   = useState("");
@@ -553,13 +593,6 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
     setBusy(false);
   };
 
-  const goGoogle = async () => {
-    setBusy(true); setErr("");
-    const error = await onGoogleLogin();
-    if (error) setErr(error);
-    setBusy(false);
-  };
-
   const goRegister = async () => {
     if(!name.trim()||!email.trim()||!rpw.trim()){setErr("Please fill all fields.");return;}
     if(rpw.length < 6){setErr("Password must be at least 6 characters.");return;}
@@ -570,7 +603,7 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
   };
 
   return (
-    <div style={{minHeight:"100vh",display:"flex",background:"var(--bg)",transition:"background 0.3s"}}>
+    <div style={{minHeight:"100vh",display:"flex",background:"var(--bg)"}}>
       {showSetup && <FirstTimeSetup onClose={()=>setShowSetup(false)}/>}
 
       {/* Left panel */}
@@ -597,26 +630,26 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
       </div>
 
       {/* Right panel */}
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 56px",background:"var(--bg)",position:"relative",transition:"background 0.3s"}}>
-        <button onClick={toggleTheme} style={{position:"absolute",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)",display:"flex",alignItems:"center",gap:6,boxShadow:"var(--cardshadow)"}}>
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 56px",background:"var(--bg)",position:"relative"}}>
+        <button onClick={toggleTheme} style={{position:"absolute",top:20,right:24,background:"var(--card)",border:"1px solid var(--border)",borderRadius:99,padding:"7px 14px",fontSize:13,cursor:"pointer",color:"var(--text1)",boxShadow:"var(--cardshadow)"}}>
           {theme==="light"?"🌙 Dark":"☀️ Light"}
         </button>
+
         <div className="fadeUp" style={{width:"100%",maxWidth:400}}>
           <div style={{marginBottom:28}}>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:"var(--text1)",letterSpacing:-0.5}}>
               {tab==="signin" ? "Welcome back" : "Create account"}
             </div>
             <div style={{fontSize:13,color:"var(--muted)",marginTop:6}}>
-              {tab==="signin" ? "Sign in to your SoundLife clinic portal" : "Register — your MIS admin will approve access"}
+              {tab==="signin" ? "Sign in to your SoundLife clinic portal" : "Register — MIS admin will grant your access"}
             </div>
           </div>
 
           <div style={{display:"flex",background:"var(--bg3)",borderRadius:11,padding:4,marginBottom:22,border:"1px solid var(--border)"}}>
             {["signin","register"].map(t=>(
               <button key={t} onClick={()=>{setTab(t);setErr("");}} style={{flex:1,padding:"9px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:600,transition:"all 0.18s",
-                background:tab===t?"var(--accent)":"transparent",
-                color:tab===t?"#fff":"var(--muted)"}}>
-                {t==="signin" ? "Sign In" : "Register"}
+                background:tab===t?"var(--accent)":"transparent", color:tab===t?"#fff":"var(--muted)"}}>
+                {t==="signin" ? "Staff Sign In" : "New Staff Register"}
               </button>
             ))}
           </div>
@@ -630,47 +663,32 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
                 <input style={{...S.inp,paddingRight:44}} type={show?"text":"password"} value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Enter password" autoComplete="current-password"/>
                 <button onClick={()=>setShow(s=>!s)} style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:14,padding:4}}>{show?"🙈":"👁"}</button>
               </div>
-              {err && <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{err}</div>}
+              {err && <ErrBox msg={err}/>}
               <button className="btn-p" onClick={go} disabled={busy} style={{marginTop:20,width:"100%",padding:"13px",background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:11,color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 14px #7c3aed33"}}>
-                {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Verifying…</>:"Sign In →"}
+                {busy?<Spin/>:"Sign In →"}
               </button>
-              <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
-                <div style={{flex:1,height:1,background:"var(--border)"}}/>
-                <span style={{fontSize:11,color:"var(--muted)"}}>or</span>
-                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              <div style={{marginTop:16,padding:"10px 13px",background:"var(--accentbg)",borderRadius:9,border:"1px solid var(--border)",fontSize:11,color:"var(--muted)",lineHeight:1.6}}>
+                👆 Use your assigned username (e.g. <strong>sl-shyamal</strong>) and password. Contact MIS admin if you don't have one.
               </div>
-              <button onClick={goGoogle} disabled={busy} style={{width:"100%",padding:"12px",background:"#fff",border:"1px solid #ddd",borderRadius:11,color:"#333",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px #00000012"}}>
-                <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.6-8 19.6-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 18.9 13 24 13c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7.1l-6.6 4.9C9.7 39.7 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.8l6.2 5.2C40.8 35.6 44 30.3 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
-                Continue with Google
-              </button>
             </>}
 
             {tab==="register" && <>
+              <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:9,padding:"10px 13px",fontSize:11,color:"#92400e",marginBottom:16,lineHeight:1.6}}>
+                ⚠️ This is only for staff who don't have a clinic username. After registering, MIS admin will assign your access.
+              </div>
               <label style={S.label}>Full Name</label>
               <input style={S.inp} value={name} onChange={e=>{setName(e.target.value);setErr("");}} placeholder="Your full name" autoFocus/>
               <label style={{...S.label,marginTop:14}}>Email Address</label>
-              <input style={S.inp} type="email" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} placeholder="yourname@example.com"/>
+              <input style={S.inp} type="email" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} placeholder="your@email.com"/>
               <label style={{...S.label,marginTop:14}}>Password</label>
               <div style={{position:"relative"}}>
                 <input style={{...S.inp,paddingRight:44}} type={show?"text":"password"} value={rpw} onChange={e=>{setRpw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&goRegister()} placeholder="Minimum 6 characters"/>
                 <button onClick={()=>setShow(s=>!s)} style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:14,padding:4}}>{show?"🙈":"👁"}</button>
               </div>
-              {err && <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{err}</div>}
+              {err && <ErrBox msg={err}/>}
               <button className="btn-p" onClick={goRegister} disabled={busy} style={{marginTop:20,width:"100%",padding:"13px",background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:11,color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                {busy?<><span style={{width:14,height:14,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite"}}/>Creating…</>:"Create Account →"}
+                {busy?<Spin/>:"Create Account →"}
               </button>
-              <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
-                <div style={{flex:1,height:1,background:"var(--border)"}}/>
-                <span style={{fontSize:11,color:"var(--muted)"}}>or</span>
-                <div style={{flex:1,height:1,background:"var(--border)"}}/>
-              </div>
-              <button onClick={goGoogle} disabled={busy} style={{width:"100%",padding:"12px",background:"#fff",border:"1px solid #ddd",borderRadius:11,color:"#333",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px #00000012"}}>
-                <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.6-8 19.6-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 18.9 13 24 13c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7.1l-6.6 4.9C9.7 39.7 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.8l6.2 5.2C40.8 35.6 44 30.3 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
-                Continue with Google
-              </button>
-              <div style={{marginTop:16,padding:"10px 13px",background:"var(--accentbg)",borderRadius:9,border:"1px solid var(--border)",fontSize:11,color:"var(--muted)",textAlign:"center",lineHeight:1.6}}>
-                After registering, your MIS admin will assign your clinic access.
-              </div>
             </>}
           </div>
 
@@ -692,8 +710,8 @@ function Login({ onLogin, onGoogleLogin, onRegister, theme, toggleTheme }) {
 function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
   const acl = "#7c3aed";
   return (
-    <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)",color:"var(--text1)",transition:"background 0.3s,color 0.3s"}}>
-      <aside className="sidebar-full" style={{width:224,background:"var(--sidebar)",borderRight:"1px solid var(--sideborder)",display:"flex",flexDirection:"column",flexShrink:0,position:"sticky",top:0,height:"100vh",overflow:"auto",boxShadow:"2px 0 12px #7c3aed08",transition:"background 0.3s"}}>
+    <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)",color:"var(--text1)"}}>
+      <aside className="sidebar-full" style={{width:224,background:"var(--sidebar)",borderRight:"1px solid var(--sideborder)",display:"flex",flexDirection:"column",flexShrink:0,position:"sticky",top:0,height:"100vh",overflow:"auto",boxShadow:"2px 0 12px #7c3aed08"}}>
         <div style={{padding:"22px 18px 14px"}}>
           <SLogo/>
           <div style={{marginTop:12,background:acl+"18",border:`1px solid ${acl}30`,borderRadius:8,padding:"5px 10px",fontSize:10,color:acl,fontWeight:700,letterSpacing:0.5,lineHeight:1.5}}>{user.clinicLabel}</div>
@@ -729,12 +747,12 @@ function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
 
 function TopBar({ title, sub, actions }) {
   return (
-    <div style={{padding:"16px 26px",borderBottom:"1px solid var(--sideborder)",background:"var(--topbar)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,position:"sticky",top:0,zIndex:20,transition:"background 0.3s",boxShadow:"0 1px 0 var(--border)"}}>
+    <div style={{padding:"16px 26px",borderBottom:"1px solid var(--sideborder)",background:"var(--topbar)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,position:"sticky",top:0,zIndex:20,boxShadow:"0 1px 0 var(--border)"}}>
       <div>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:"var(--text1)",letterSpacing:-0.3}}>{title}</div>
         {sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>{sub}</div>}
       </div>
-      {actions&&<div style={{display:"flex",gap:8,alignItems:"center"}}>{actions}</div>}
+      {actions&&<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>{actions}</div>}
     </div>
   );
 }
@@ -775,7 +793,13 @@ function MISOverview({ store, onSelect, setLb }) {
   const recentImgs=store.patients.flatMap(p=>(p.records||[]).filter(r=>r.type==="image").map(r=>({...r,patient:p}))).sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,8);
   return (
     <div>
-      <TopBar title="SoundLife MIS" sub={new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}/>
+      <TopBar title="SoundLife MIS" sub={new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+        actions={
+          <div style={{display:"flex",gap:8}}>
+            <button className="btn-p" onClick={()=>exportToExcel(store.patients,"SoundLife_All_Patients")} style={{...S.btn,background:"linear-gradient(135deg,#059669,#047857)",fontSize:12,padding:"8px 14px"}}>⬇ Excel</button>
+            <button className="btn-p" onClick={()=>exportToPDF(store.patients,"SoundLife Patient Report")} style={{...S.btn,background:"linear-gradient(135deg,#dc2626,#b91c1c)",fontSize:12,padding:"8px 14px"}}>⬇ PDF</button>
+          </div>
+        }/>
       <div className="main-pad" style={{padding:"22px 26px"}}>
         <div className="grid-3" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:22}}>
           {[[total,"Total Patients","👥"],[totalRec,"Total Records","📁"],[Object.keys(CLINICS).length,"Active Clinics","🏥"],[today,"Registered Today","✅"]].map(([v,l,ic],i)=>(
@@ -829,10 +853,7 @@ function AuditLog() {
 
   useEffect(() => {
     const q = query(collection(db, "auditLogs"), orderBy("ts", "desc"), limit(500));
-    const unsub = onSnapshot(q, snap => {
-      setLogs(snap.docs.map(d => d.data()));
-      setLoading(false);
-    });
+    const unsub = onSnapshot(q, snap => { setLogs(snap.docs.map(d => d.data())); setLoading(false); });
     return unsub;
   }, []);
 
@@ -840,6 +861,7 @@ function AuditLog() {
     LOGIN:           { label:"Login",           icon:"🔐", color:"#059669" },
     LOGOUT:          { label:"Logout",          icon:"🚪", color:"#6d28d9" },
     PATIENT_CREATED: { label:"Patient Added",   icon:"👤", color:"#7c3aed" },
+    PATIENT_EDITED:  { label:"Patient Edited",  icon:"✏️", color:"#0891b2" },
     RECORD_UPLOADED: { label:"Record Uploaded", icon:"📎", color:"#0891b2" },
     RECORD_DELETED:  { label:"Record Deleted",  icon:"🗑️", color:"#e84c3d" },
     VISIT_LOGGED:    { label:"Visit Logged",    icon:"📝", color:"#d97706" },
@@ -849,10 +871,10 @@ function AuditLog() {
 
   return (
     <div>
-      <TopBar title="Audit Log" sub="Every action by every user — last 500 entries"/>
+      <TopBar title="Audit Log" sub="Every action — last 500 entries"/>
       <div className="main-pad" style={{padding:"22px 26px"}}>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
-          <FBtn active={filter==="ALL"} onClick={()=>setFilter("ALL")}>All Actions</FBtn>
+          <FBtn active={filter==="ALL"} onClick={()=>setFilter("ALL")}>All</FBtn>
           {Object.entries(ACTION_LABELS).map(([k,v])=>(
             <FBtn key={k} active={filter===k} onClick={()=>setFilter(k)}>{v.icon} {v.label}</FBtn>
           ))}
@@ -862,12 +884,10 @@ function AuditLog() {
             <div>Time</div><div>User</div><div>Clinic</div><div>Action</div><div>Detail</div>
           </div>
           {loading && <div style={{padding:20,textAlign:"center",color:"var(--muted)",fontSize:12}}>Loading…</div>}
-          {!loading && filtered.length === 0 && <Empty msg="No audit entries yet"/>}
+          {!loading && filtered.length===0 && <Empty msg="No entries yet"/>}
           {filtered.map((l,i) => {
             const al = ACTION_LABELS[l.action] || { label:l.action, icon:"•", color:"var(--muted)" };
-            const detail = l.detail?.patientName ? `Patient: ${l.detail.patientName}` :
-                           l.detail?.fileName    ? `File: ${l.detail.fileName}` :
-                           l.detail?.username    ? `User: ${l.detail.username}` : "—";
+            const detail = l.detail?.patientName?`Patient: ${l.detail.patientName}`:l.detail?.fileName?`File: ${l.detail.fileName}`:l.detail?.fields?`Fields: ${l.detail.fields?.join(", ")}`:"—";
             return (
               <div key={i} className="row-hover" style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 1fr 1.5fr 1.5fr",padding:"10px 18px",borderTop:"1px solid var(--border)",fontSize:11,alignItems:"center"}}>
                 <div style={{color:"var(--muted)",fontSize:10}}>{new Date(l.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>
@@ -906,6 +926,7 @@ function Clinic({ user, store, onLogout, theme, toggleTheme }) {
   );
 }
 
+// ── ClinicHome: export buttons removed ────────────────────
 function ClinicHome({ user, myPts, onAdd, onSearch }) {
   const acl="#7c3aed"; const c=CLINICS[user.clinic];
   const totalRec=myPts.reduce((a,p)=>a+(p.records?.length||0),0);
@@ -914,7 +935,11 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
   const quote=QUOTES[Math.floor(Date.now()/86400000)%QUOTES.length];
   return (
     <div>
-      <TopBar title={user.clinicLabel} sub={`${c?.city} · ${c?.region}`} actions={<button className="btn-p" onClick={onAdd} style={S.btn}>+ New Patient</button>}/>
+      {/* No export actions here — clinic staff do not have download authority */}
+      <TopBar title={user.clinicLabel} sub={`${c?.city} · ${c?.region}`}
+        actions={
+          <button className="btn-p" onClick={onAdd} style={S.btn}>+ New Patient</button>
+        }/>
       <div className="main-pad" style={{padding:"22px 26px"}}>
         <div className="grid-3" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:24}}>
           {[[myPts.length,"Total Patients","👥"],[totalRec,"Records Uploaded","📋"],[today,"Registered Today","📅"],[thisMonth,"This Month","📆"]].map(([v,l,ic],i)=>(
@@ -928,31 +953,13 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
           <button className="card-hover btn-p" onClick={onSearch} style={{background:"var(--card)",border:`2px dashed ${acl}40`,borderRadius:16,padding:"28px 24px",cursor:"pointer",textAlign:"left",boxShadow:"var(--cardshadow)"}}>
             <div style={{fontSize:28,marginBottom:10}}>🔍</div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:"var(--text1)",marginBottom:6}}>Search Patient</div>
-            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5}}>Find any patient by mobile number, case code, or name. Search across all clinics.</div>
+            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5}}>Find by mobile number, case code, or name across all clinics.</div>
           </button>
           <button className="card-hover btn-p" onClick={onAdd} style={{background:`linear-gradient(135deg,${acl}18,${acl}08)`,border:`2px dashed ${acl}50`,borderRadius:16,padding:"28px 24px",cursor:"pointer",textAlign:"left",boxShadow:"var(--cardshadow)"}}>
             <div style={{fontSize:28,marginBottom:10}}>➕</div>
             <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:"var(--text1)",marginBottom:6}}>Register New Patient</div>
-            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5}}>Register a first-time patient. An auto-generated case code will be assigned immediately.</div>
+            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5}}>Auto-generated case code assigned instantly.</div>
           </button>
-        </div>
-        <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"20px 22px",boxShadow:"var(--cardshadow)",marginBottom:18}}>
-          <div style={{fontSize:13,fontWeight:700,color:"var(--text1)",marginBottom:14}}>How to Use</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            {[["1","New Patient","Click 'Register New Patient'. Fill in name, phone, age. A case code like SHY-123456 is auto-generated."],
-              ["2","Upload Records","Search the patient, open their profile, go to 'Records' tab and upload diagnosis images or reports."],
-              ["3","Return Visit","When patient returns, search by phone or case code — works across all SoundLife clinics."],
-              ["4","Log Visits","In the patient profile, use the 'Visits' tab to log notes for each consultation."],
-            ].map(([n,t,d])=>(
-              <div key={n} style={{background:"var(--accentbg)",borderRadius:10,padding:"12px 14px",border:"1px solid var(--border)"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                  <div style={{width:22,height:22,borderRadius:99,background:acl,color:"#fff",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{n}</div>
-                  <div style={{fontSize:12,fontWeight:700,color:"var(--text1)"}}>{t}</div>
-                </div>
-                <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.5}}>{d}</div>
-              </div>
-            ))}
-          </div>
         </div>
         <div style={{background:`linear-gradient(135deg,${acl}18,${acl}08)`,border:`1px solid ${acl}25`,borderRadius:14,padding:"18px 22px"}}>
           <div style={{fontSize:10,color:acl,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>Today's Thought</div>
@@ -995,7 +1002,7 @@ function SearchView({ store, onSelect, isMIS, clinicId, user }) {
             <button className="btn-p" onClick={run} style={S.btn}>Search</button>
           </div>
           <div style={{marginTop:16}}>
-            {res===null&&<div style={{color:"var(--muted2)",fontSize:12,textAlign:"center",padding:18}}>Enter a query above and press Search or Enter</div>}
+            {res===null&&<div style={{color:"var(--muted2)",fontSize:12,textAlign:"center",padding:18}}>Enter a query and press Search</div>}
             {res?.length===0&&<Empty msg="No patients found"/>}
             {res?.map(p=>{
               const c=CLINICS[p.clinicId];
@@ -1072,31 +1079,22 @@ function AddPatient({ user, store, onDone, onCancel }) {
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
               <div style={{fontSize:22}}>⚠️</div>
               <div>
-                <div style={{fontWeight:700,fontSize:14,color:"#c2410c"}}>Entry already exists for this number</div>
-                <div style={{fontSize:12,color:"#9a3412",marginTop:2}}>Registered at <strong>{CLINICS[dupPatient.clinicId]?.label}</strong> ({CLINICS[dupPatient.clinicId]?.city}).</div>
+                <div style={{fontWeight:700,fontSize:14,color:"#c2410c"}}>This number is already registered</div>
+                <div style={{fontSize:12,color:"#9a3412",marginTop:2}}>At <strong>{CLINICS[dupPatient.clinicId]?.label}</strong>, {CLINICS[dupPatient.clinicId]?.city}.</div>
               </div>
             </div>
             <div style={{background:"var(--card)",border:"1px solid #fed7aa",borderRadius:10,padding:"12px 15px",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <div style={{width:38,height:38,borderRadius:10,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:15}}>{dupPatient.name?.[0]?.toUpperCase()}</div>
-                <div>
-                  <div style={{fontWeight:700,fontSize:13,color:"var(--text1)"}}>{dupPatient.name}</div>
-                  <div style={{fontSize:11,color:"var(--muted)"}}>📱 {dupPatient.phone} · <Cb code={dupPatient.id} color="#7c3aed"/> · {CLINICS[dupPatient.clinicId]?.label}</div>
-                </div>
-              </div>
-              <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>{dupPatient.records?.length||0} records · {dupPatient.visits?.length||0} visits · Registered {new Date(dupPatient.createdAt).toLocaleDateString("en-IN")}</div>
+              <div style={{fontWeight:700,fontSize:13,color:"var(--text1)",marginBottom:4}}>{dupPatient.name}</div>
+              <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>📱 {dupPatient.phone} · <Cb code={dupPatient.id} color="#7c3aed"/> · {dupPatient.records?.length||0} records · {dupPatient.visits?.length||0} visits</div>
               {!dupLogDone?(
-                <div>
-                  <div style={{fontSize:11,fontWeight:700,color:"var(--text2)",marginBottom:6}}>📝 Log today's visit for this patient</div>
-                  <div style={{display:"flex",gap:8}}>
-                    <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
-                    <button className="btn-p" onClick={async()=>{if(!dupNote.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic},user);setDupNote("");setDupLogDone(true);}}
-                      style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log Visit</button>
-                  </div>
+                <div style={{display:"flex",gap:8}}>
+                  <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
+                  <button className="btn-p" onClick={async()=>{if(!dupNote.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic},user);setDupNote("");setDupLogDone(true);}}
+                    style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log</button>
                 </div>
-              ):(<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"9px 13px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged successfully!</div>)}
+              ):(<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"9px 13px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged!</div>)}
             </div>
-            <button onClick={()=>setDupPatient(null)} style={S.btnG}>← Go Back to Form</button>
+            <button onClick={()=>setDupPatient(null)} style={S.btnG}>← Back to Form</button>
           </div>
         )}
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"26px",boxShadow:"var(--cardshadow)"}}>
@@ -1104,7 +1102,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
             {[{k:"name",l:"Full Name *",t:"text",ph:"Patient's full name"},{k:"phone",l:"Mobile Number *",t:"tel",ph:"10-digit mobile"},{k:"age",l:"Age *",t:"number",ph:"Age in years"},{k:"address",l:"Address",t:"text",ph:"Area / City"}].map(x=>(
               <div key={x.k} style={{marginBottom:16}}>
                 <label style={S.label}>{x.l}</label>
-                <input style={{...S.inp,...(errs[x.k]?{borderColor:"var(--danger) !important"}:{})}} type={x.t} placeholder={x.ph} value={f[x.k]}
+                <input style={S.inp} type={x.t} placeholder={x.ph} value={f[x.k]}
                   onChange={e=>{set(x.k,e.target.value);setErrs(r=>({...r,[x.k]:undefined}));}}
                   onBlur={x.k==="phone"?e=>{const ph=e.target.value.trim();if(/^\d{10}$/.test(ph)){const ex=store.findByPhoneGlobal(ph);if(ex.length>0)setDupPatient(ex[0]);}}:undefined}/>
                 {errs[x.k]&&<div style={{color:"var(--danger)",fontSize:10,marginTop:3}}>{errs[x.k]}</div>}
@@ -1122,7 +1120,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
               </select>
             </div>
             <div style={{marginBottom:16,gridColumn:"1/-1"}}>
-              <label style={S.label}>📣 Source — How did the patient hear about us?</label>
+              <label style={S.label}>📣 How did the patient hear about us?</label>
               <select style={S.inp} value={f.source} onChange={e=>set("source",e.target.value)}>
                 <option value="">Select source…</option>
                 {SOURCE_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
@@ -1135,7 +1133,7 @@ function AddPatient({ user, store, onDone, onCancel }) {
           </div>
           <div style={{display:"flex",gap:10}}>
             <button className="btn-p" onClick={submit} disabled={busy} style={{...S.btn,background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",cursor:busy?"not-allowed":"pointer"}}>
-              {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Saving…</>:"Register & Generate Code"}
+              {busy?<><Spin/> Saving…</>:"Register & Generate Code"}
             </button>
             <button onClick={onCancel} style={S.btnG}>Cancel</button>
           </div>
@@ -1153,10 +1151,15 @@ function AllPatients({ store, onSelect }) {
   const list=filter==="all"?store.patients:store.patients.filter(p=>p.clinicId===filter);
   return (
     <div>
-      <TopBar title="All Patients" sub={`${list.length} shown`}/>
+      <TopBar title="All Patients" sub={`${list.length} shown`}
+        actions={
+          <div style={{display:"flex",gap:8}}>
+            <button className="btn-p" onClick={()=>exportToExcel(list,`SoundLife_${filter==="all"?"All":CLINICS[filter]?.label}`)} style={{...S.btn,background:"linear-gradient(135deg,#059669,#047857)",fontSize:12,padding:"8px 14px"}}>⬇ Excel</button>
+            <button className="btn-p" onClick={()=>exportToPDF(list,filter==="all"?"All Patients Report":`${CLINICS[filter]?.label} Report`)} style={{...S.btn,background:"linear-gradient(135deg,#dc2626,#b91c1c)",fontSize:12,padding:"8px 14px"}}>⬇ PDF</button>
+          </div>
+        }/>
       <div className="main-pad" style={{padding:"22px 26px"}}>
         <div style={{marginBottom:14}}>
-          <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Filter by Clinic</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}><FBtn active={filter==="all"} onClick={()=>setFilter("all")}>All Clinics</FBtn></div>
           {Object.entries(REGIONS).map(([region,ids])=>(
             <div key={region} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:6}}>
@@ -1259,7 +1262,6 @@ function Analytics({ store }) {
                 </div>
               ))}
             </div>
-            {total===0&&<Empty msg="No data yet"/>}
           </div>
         </div>
         <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:14,padding:"20px",boxShadow:"var(--cardshadow)"}}>
@@ -1284,20 +1286,49 @@ function Analytics({ store }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// PATIENT MODAL
+// PATIENT MODAL — with Edit tab
 // ══════════════════════════════════════════════════════════
 function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, user }) {
-  const [tab,setTab]=useState("info"); const [note,setNote]=useState(""); const fileRef=useRef(); const [busy,setBusy]=useState(false);
-  const live=store.patients.find(x=>x.id===p.id)||p; const c=CLINICS[live.clinicId]; const acl="#7c3aed";
+  const [tab,setTab]=useState("info");
+  const [note,setNote]=useState("");
+  const fileRef=useRef();
+  const [busy,setBusy]=useState(false);
+  const [editF,setEditF]=useState({});
+  const [editBusy,setEditBusy]=useState(false);
+  const [editDone,setEditDone]=useState(false);
+
+  const live=store.patients.find(x=>x.id===p.id)||p;
+  const c=CLINICS[live.clinicId];
+  const acl="#7c3aed";
+
+  const startEdit = () => {
+    setEditF({ name:live.name, phone:live.phone, age:live.age, gender:live.gender||"Male", address:live.address||"", bloodGroup:live.bloodGroup||"", source:live.source||"", notes:live.notes||"" });
+  };
+
+  const saveEdit = async () => {
+    if(!editF.name?.trim()) return;
+    setEditBusy(true);
+    await store.editPatient(live.id, editF, user);
+    setEditBusy(false); setTab("info"); setEditDone(true);
+    setTimeout(() => setEditDone(false), 3000);
+  };
+
   const upload=async(e)=>{
     const files=Array.from(e.target.files);if(!files.length)return;
     setBusy(true);
     for(const f of files){await store.addRecord(live.id,{type:f.type.startsWith("image/")?"image":"document",name:f.name,file:f},user);}
     setBusy(false);
   };
+
+  const tabs = readOnly
+    ? ["info","records","visits"]
+    : ["info","edit","records","visits"];
+
   return (
     <div className="fadeIn" style={{position:"fixed",inset:0,background:"#00000066",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(5px)"}} onClick={onClose}>
       <div style={{background:"var(--card)",border:`1px solid ${acl}30`,borderRadius:18,width:"100%",maxWidth:720,maxHeight:"92vh",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 32px 80px #00000040"}} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
         <div style={{padding:"18px 22px",borderBottom:"1px solid var(--border)",background:"var(--accentbg)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <div style={{width:48,height:48,borderRadius:13,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:20}}>{live.name?.[0]?.toUpperCase()}</div>
@@ -1308,19 +1339,26 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
                 <span style={{background:acl+"18",color:acl,padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>{c?.label} · {c?.city}</span>
                 {live.bloodGroup&&<span style={{background:"#fee2e2",color:"#dc2626",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>🩸 {live.bloodGroup}</span>}
                 {live.source&&<span style={{background:"#ede9fe",color:"#7c3aed",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>📣 {live.source}</span>}
+                {editDone&&<span style={{background:"#f0fdf4",color:"#15803d",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>✅ Saved!</span>}
               </div>
             </div>
           </div>
           <button onClick={onClose} style={{background:"var(--bg)",border:"1px solid var(--border)",borderRadius:8,width:32,height:32,fontSize:14,cursor:"pointer",color:"var(--muted)",flexShrink:0}}>✕</button>
         </div>
+
+        {/* Tabs */}
         <div style={{display:"flex",borderBottom:"1px solid var(--border)",background:"var(--card)",padding:"0 22px",gap:4}}>
-          {["info","records","visits"].map(t=>(
-            <button key={t} onClick={()=>setTab(t)} style={{padding:"11px 14px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?acl:"transparent"}`,color:tab===t?acl:"var(--muted)",fontSize:12,cursor:"pointer",fontWeight:tab===t?700:400,marginBottom:-1,transition:"all 0.15s"}}>
-              {t==="records"?`Records (${live.records?.length||0})`:t==="visits"?`Visits (${live.visits?.length||0})`:"Patient Info"}
+          {tabs.map(t=>(
+            <button key={t} onClick={()=>{setTab(t);if(t==="edit")startEdit();}} style={{padding:"11px 14px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?acl:"transparent"}`,color:tab===t?acl:"var(--muted)",fontSize:12,cursor:"pointer",fontWeight:tab===t?700:400,marginBottom:-1,transition:"all 0.15s",textTransform:"capitalize"}}>
+              {t==="records"?`Records (${live.records?.length||0})`:t==="visits"?`Visits (${live.visits?.length||0})`:t==="edit"?"✏️ Edit":t==="info"?"Patient Info":t}
             </button>
           ))}
         </div>
+
+        {/* Body */}
         <div style={{flex:1,overflow:"auto",padding:"20px 22px",background:"var(--bg)"}}>
+
+          {/* INFO TAB */}
           {tab==="info"&&(
             <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
               {[["Full Name",live.name],["Mobile",live.phone],["Age",live.age?`${live.age} yrs`:"—"],["Gender",live.gender||"—"],["Blood Group",live.bloodGroup||"—"],["Address",live.address||"—"],["Clinic",c?.label],["City",c?.city],["Case Code",live.id],["Registered",new Date(live.createdAt).toLocaleDateString("en-IN")]].map(([k,v])=>(
@@ -1343,12 +1381,63 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
               )}
             </div>
           )}
+
+          {/* EDIT TAB */}
+          {tab==="edit"&&(
+            <div>
+              <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:12,padding:"20px",boxShadow:"var(--cardshadow)"}}>
+                <div style={{fontSize:12,color:"var(--muted)",marginBottom:18,background:"var(--accentbg)",padding:"9px 13px",borderRadius:8,border:"1px solid var(--border)"}}>
+                  ✏️ Edit patient details below. Case code <strong style={{color:"var(--accent)"}}>{live.id}</strong> and registration date cannot be changed.
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 18px"}}>
+                  {[{k:"name",l:"Full Name *",t:"text"},{k:"phone",l:"Mobile Number",t:"tel"},{k:"age",l:"Age",t:"number"},{k:"address",l:"Address",t:"text"}].map(x=>(
+                    <div key={x.k} style={{marginBottom:14}}>
+                      <label style={S.label}>{x.l}</label>
+                      <input style={S.inp} type={x.t} value={editF[x.k]||""} onChange={e=>setEditF(f=>({...f,[x.k]:e.target.value}))}/>
+                    </div>
+                  ))}
+                  <div style={{marginBottom:14}}>
+                    <label style={S.label}>Gender</label>
+                    <select style={S.inp} value={editF.gender||"Male"} onChange={e=>setEditF(f=>({...f,gender:e.target.value}))}>
+                      <option>Male</option><option>Female</option><option>Other</option>
+                    </select>
+                  </div>
+                  <div style={{marginBottom:14}}>
+                    <label style={S.label}>Blood Group</label>
+                    <select style={S.inp} value={editF.bloodGroup||""} onChange={e=>setEditF(f=>({...f,bloodGroup:e.target.value}))}>
+                      <option value="">Select…</option>
+                      {["A+","A-","B+","B-","O+","O-","AB+","AB-"].map(g=><option key={g}>{g}</option>)}
+                    </select>
+                  </div>
+                  <div style={{marginBottom:14,gridColumn:"1/-1"}}>
+                    <label style={S.label}>Patient Source</label>
+                    <select style={S.inp} value={editF.source||""} onChange={e=>setEditF(f=>({...f,source:e.target.value}))}>
+                      <option value="">Select source…</option>
+                      {SOURCE_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div style={{marginBottom:14,gridColumn:"1/-1"}}>
+                    <label style={S.label}>Notes</label>
+                    <textarea style={{...S.inp,minHeight:72,resize:"vertical"}} value={editF.notes||""} onChange={e=>setEditF(f=>({...f,notes:e.target.value}))}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:10}}>
+                  <button className="btn-p" onClick={saveEdit} disabled={editBusy} style={{...S.btn,cursor:editBusy?"not-allowed":"pointer",background:editBusy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)"}}>
+                    {editBusy?<><Spin/> Saving…</>:"💾 Save Changes"}
+                  </button>
+                  <button onClick={()=>setTab("info")} style={S.btnG}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* RECORDS TAB */}
           {tab==="records"&&(
             <div>
               {!readOnly&&(
                 <div style={{marginBottom:14}}>
                   <button className="btn-p" onClick={()=>fileRef.current.click()} disabled={busy} style={{...S.btn,background:busy?"var(--border)":"linear-gradient(135deg,#7c3aed,#6d28d9)",cursor:busy?"not-allowed":"pointer"}}>
-                    {busy?<><span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:7}}/>Uploading…</>:"📎 Upload Image / Report"}
+                    {busy?<><Spin/> Uploading…</>:"📎 Upload Image / Report"}
                   </button>
                   <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple style={{display:"none"}} onChange={upload}/>
                 </div>
@@ -1368,6 +1457,8 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
               </div>
             </div>
           )}
+
+          {/* VISITS TAB */}
           {tab==="visits"&&(
             <div>
               {!readOnly&&(
@@ -1440,7 +1531,8 @@ function SLogo({ white }) {
       </div>
       <div>
         <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,lineHeight:1,letterSpacing:-0.3}}>
-          <span style={{color:white?"#fff":"#e53935",fontWeight:700}}>Sound</span><span style={{color:white?"#ddd":"#555555",fontWeight:400}}>Life</span>
+          <span style={{color:white?"#fff":"#e53935",fontWeight:700}}>Sound</span>
+          <span style={{color:white?"#ddd":"#555555",fontWeight:400}}>Life</span>
           <sup style={{fontSize:8,color:white?"#bbb":"#777777",verticalAlign:"super"}}>®</sup>
         </div>
         <div style={{fontSize:7.5,color:white?"rgba(255,255,255,0.7)":"#888888",letterSpacing:1.4,textTransform:"uppercase",marginTop:2,fontWeight:500}}>speech & hearing clinic</div>
@@ -1448,7 +1540,9 @@ function SLogo({ white }) {
     </div>
   );
 }
-function PRow({p,onClick}){const c=CLINICS[p.clinicId];return(<div className="row-hover" onClick={onClick} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,cursor:"pointer",marginBottom:5,background:"var(--accentbg)",border:"1px solid var(--border)",transition:"background 0.12s"}}><div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>{p.name?.[0]?.toUpperCase()}</div><div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,color:"var(--text1)",fontSize:13}}>{p.name}</div><div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>📱 {p.phone} · {c?.label} · {c?.city}</div></div><div style={{textAlign:"right",flexShrink:0}}><Cb code={p.id} color="#7c3aed"/><div style={{fontSize:9,color:"var(--muted2)",marginTop:3}}>{p.records?.length||0} records</div></div></div>);}
+function Spin(){return <span style={{width:13,height:13,border:"2px solid #ffffff44",borderTopColor:"#fff",borderRadius:"50%",display:"inline-block",animation:"spin 0.7s linear infinite",marginRight:6}}/>;}
+function ErrBox({msg}){return <div style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",borderRadius:9,padding:"9px 13px",fontSize:12,marginTop:12}}>{msg}</div>;}
+function PRow({p,onClick}){const c=CLINICS[p.clinicId];return(<div className="row-hover" onClick={onClick} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,cursor:"pointer",marginBottom:5,background:"var(--accentbg)",border:"1px solid var(--border)"}}><div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,#7c3aed,#6d28d9)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:14,flexShrink:0}}>{p.name?.[0]?.toUpperCase()}</div><div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,color:"var(--text1)",fontSize:13}}>{p.name}</div><div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>📱 {p.phone} · {c?.label} · {c?.city}</div></div><div style={{textAlign:"right",flexShrink:0}}><Cb code={p.id} color="#7c3aed"/><div style={{fontSize:9,color:"var(--muted2)",marginTop:3}}>{p.records?.length||0} records</div></div></div>);}
 function RCard({r,onView,showClinic}){const c=r.patient?CLINICS[r.patient.clinicId]:null;return(<div className="rec-card" onClick={onView} style={{borderRadius:12,overflow:"hidden",border:"1px solid var(--border)",background:"var(--card)"}}><div style={{position:"relative"}}><img src={r.data} style={{width:"100%",height:130,objectFit:"cover",display:"block"}} alt={r.name}/>{showClinic&&c&&<div style={{position:"absolute",top:7,right:7,background:"#7c3aedee",borderRadius:5,padding:"2px 7px",fontSize:9,fontWeight:700,color:"#fff"}}>{c.label}</div>}</div><div style={{padding:"8px 10px"}}>{r.patient&&<div style={{fontSize:11,fontWeight:600,color:"var(--text1)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.patient.name}</div>}<div style={{fontSize:9,color:"var(--muted)",marginTop:2}}>{r.name}</div><div style={{fontSize:9,color:"var(--muted2)",marginTop:1}}>{new Date(r.ts).toLocaleDateString("en-IN")}</div></div></div>);}
 function Cb({code,color="#7c3aed"}){return <span style={{background:color+"18",color,padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:0.5,fontFamily:"monospace"}}>{code}</span>;}
 function FBtn({active,onClick,children,color="#7c3aed"}){return(<button onClick={onClick} style={{padding:"5px 11px",borderRadius:6,border:`1px solid ${active?color:"var(--border)"}`,background:active?color+"18":"transparent",color:active?color:"var(--muted)",fontSize:10,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>{children}</button>);}
@@ -1457,7 +1551,7 @@ function Empty({msg}){return <div style={{color:"var(--muted2)",fontSize:12,text
 const S={
   label:{fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:0.8,display:"block",marginBottom:6,textTransform:"uppercase"},
   inp:{width:"100%",padding:"10px 13px",background:"var(--inputbg)",border:"1px solid var(--border)",borderRadius:9,color:"var(--text1)",fontSize:13,transition:"all 0.2s"},
-  btn:{padding:"10px 20px",background:"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:9,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",boxShadow:"0 4px 12px #7c3aed33"},
+  btn:{padding:"10px 20px",background:"linear-gradient(135deg,#7c3aed,#6d28d9)",border:"none",borderRadius:9,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",boxShadow:"0 4px 12px #7c3aed33",display:"inline-flex",alignItems:"center",gap:6},
   btnG:{padding:"10px 20px",background:"transparent",border:"1px solid var(--border)",borderRadius:9,color:"var(--muted)",fontSize:13,fontWeight:600,cursor:"pointer"},
   ibtn:{padding:"6px 11px",background:"#1e1a38",border:"1px solid #3d3070",borderRadius:7,color:"#c4b5fd",fontSize:12,cursor:"pointer"},
 };
