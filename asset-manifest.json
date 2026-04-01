@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/soundlife-cms/static/css/main.e6c13ad2.css",
-    "main.js": "/soundlife-cms/static/js/main.5ceb12b0.js",
+    "main.js": "/soundlife-cms/static/js/main.a78c3aed.js",
     "static/js/453.a9814408.chunk.js": "/soundlife-cms/static/js/453.a9814408.chunk.js",
     "index.html": "/soundlife-cms/index.html",
     "main.e6c13ad2.css.map": "/soundlife-cms/static/css/main.e6c13ad2.css.map",
-    "main.5ceb12b0.js.map": "/soundlife-cms/static/js/main.5ceb12b0.js.map",
+    "main.a78c3aed.js.map": "/soundlife-cms/static/js/main.a78c3aed.js.map",
     "453.a9814408.chunk.js.map": "/soundlife-cms/static/js/453.a9814408.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.e6c13ad2.css",
-    "static/js/main.5ceb12b0.js"
+    "static/js/main.a78c3aed.js"
   ]
 }
