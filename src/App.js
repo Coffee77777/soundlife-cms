@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, doc, onSnapshot,
-  addDoc, updateDoc, arrayUnion, query, orderBy, limit,
+  addDoc, updateDoc, deleteDoc, arrayUnion, query, orderBy, limit,
   setDoc, getDoc
 } from "firebase/firestore";
 import {
@@ -131,21 +131,23 @@ async function exportToExcel(patients, filename = "SoundLife_Patients") {
     "Mobile":          p.phone,
     "Age":             p.age,
     "Gender":          p.gender || "",
-    "Blood Group":     p.bloodGroup || "",
     "Address":         p.address || "",
     "Clinic":          CLINICS[p.clinicId]?.label || p.clinicId,
     "City":            CLINICS[p.clinicId]?.city || "",
     "Region":          CLINICS[p.clinicId]?.region || "",
     "Source":          p.source || "",
     "Records":         p.records?.length || 0,
-    "Visits":          p.visits?.length || 0,
+    "Total Visits":    p.visits?.length || 0,
     "Registered On":   new Date(p.createdAt).toLocaleDateString("en-IN"),
     "Initial Notes":   p.notes || "",
+    "Visit Logs":      (p.visits||[]).map(v =>
+      `${new Date(v.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})} | ${CLINICS[v.clinicId]?.label||v.clinicId||"?"} | By: ${v.attendedBy||"—"} | ${v.note}`
+    ).join("\n") || "",
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   ws["!cols"] = [
-    {wch:14},{wch:22},{wch:14},{wch:6},{wch:8},{wch:10},
-    {wch:22},{wch:18},{wch:14},{wch:12},{wch:24},{wch:8},{wch:8},{wch:14},{wch:36}
+    {wch:14},{wch:22},{wch:14},{wch:6},{wch:8},
+    {wch:22},{wch:18},{wch:14},{wch:12},{wch:24},{wch:8},{wch:8},{wch:14},{wch:36},{wch:80}
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Patients");
@@ -169,29 +171,31 @@ async function exportToPDF(patients, title = "SoundLife Patient Report") {
 
   doc.autoTable({
     startY: 22,
-    head: [["Code","Name","Mobile","Age","Gender","Blood","Clinic","City","Source","Records","Visits","Registered"]],
+    head: [["Code","Name","Mobile","Age","Gender","Clinic","City","Source","Recs","Visits","Registered","Visit Logs (Date | Clinic | By | Note)"]],
     body: patients.map(p => [
       p.id,
       p.name,
       p.phone,
       p.age || "—",
       p.gender || "—",
-      p.bloodGroup || "—",
       CLINICS[p.clinicId]?.label || p.clinicId,
       CLINICS[p.clinicId]?.city || "—",
       p.source || "—",
       p.records?.length || 0,
       p.visits?.length || 0,
       new Date(p.createdAt).toLocaleDateString("en-IN"),
+      (p.visits||[]).map(v =>
+        `${new Date(v.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})} | ${CLINICS[v.clinicId]?.label||v.clinicId||"?"} | By: ${v.attendedBy||"—"} | ${v.note}`
+      ).join("\n") || "—",
     ]),
-    headStyles: { fillColor: [109, 40, 217], textColor: 255, fontSize: 7, fontStyle: "bold" },
-    bodyStyles: { fontSize: 7, textColor: [30, 27, 75] },
+    headStyles: { fillColor: [109, 40, 217], textColor: 255, fontSize: 6, fontStyle: "bold" },
+    bodyStyles: { fontSize: 6, textColor: [30, 27, 75] },
     alternateRowStyles: { fillColor: [237, 233, 254] },
     columnStyles: {
-      0: {cellWidth:22}, 1: {cellWidth:30}, 2: {cellWidth:22},
-      3: {cellWidth:10}, 4: {cellWidth:14}, 5: {cellWidth:14},
-      6: {cellWidth:26}, 7: {cellWidth:20}, 8: {cellWidth:30},
-      9: {cellWidth:14}, 10: {cellWidth:10}, 11: {cellWidth:20},
+      0: {cellWidth:20}, 1: {cellWidth:26}, 2: {cellWidth:20},
+      3: {cellWidth:8},  4: {cellWidth:12}, 5: {cellWidth:22},
+      6: {cellWidth:18}, 7: {cellWidth:26}, 8: {cellWidth:10},
+      9: {cellWidth:10}, 10: {cellWidth:18}, 11: {cellWidth:60},
     },
     margin: { left: 14, right: 14 },
   });
@@ -294,9 +298,34 @@ function genCode(cid) {
   return `${cid.slice(0,3).toUpperCase()}-${Math.floor(100000+Math.random()*900000)}`;
 }
 
+// ── Compress image before upload (max 1200px wide, 0.78 quality) ──
+async function compressImage(file, maxWidth = 1200, quality = 0.78) {
+  if (!file.type.startsWith("image/")) return file;
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        canvas.toBlob(
+          (blob) => resolve(new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" })),
+          "image/jpeg", quality
+        );
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function uploadToCloudinary(file) {
+  const compressed = await compressImage(file);
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("file", compressed);
   formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/upload`,
@@ -345,7 +374,7 @@ function useStore() {
   const editPatient = async (pid, updates, user) => {
     const patient = patients.find(p => p.id === pid);
     if (!patient) return;
-    const allowed = ["name","phone","age","gender","address","bloodGroup","source","notes"];
+    const allowed = ["name","phone","age","gender","address","source","notes"];
     const clean = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
     await updateDoc(doc(db, "patients", patient._docId), clean);
     await writeAudit(user, "PATIENT_EDITED", { patientId:pid, patientName:patient.name, fields:Object.keys(clean) });
@@ -378,12 +407,19 @@ function useStore() {
     await writeAudit(user, "VISIT_LOGGED", { patientId:pid, patientName:patient.name });
   };
 
+  const deletePatient = async (pid, user) => {
+    const patient = patients.find(p => p.id === pid);
+    if (!patient) return;
+    await deleteDoc(doc(db, "patients", patient._docId));
+    await writeAudit(user, "PATIENT_DELETED", { patientId: pid, patientName: patient.name });
+  };
+
   const searchPhone       = (q) => patients.filter(p => p.phone?.includes(q));
   const searchCode        = (q) => patients.filter(p => p.id?.toLowerCase().includes(q.toLowerCase()));
   const searchName        = (q) => patients.filter(p => p.name?.toLowerCase().includes(q.toLowerCase()));
   const findByPhoneGlobal = (phone) => patients.filter(p => p.phone === phone.trim());
 
-  return { patients, loading, addPatient, editPatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName, findByPhoneGlobal };
+  return { patients, loading, addPatient, editPatient, deletePatient, addRecord, deleteRecord, addVisit, searchPhone, searchCode, searchName, findByPhoneGlobal };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -720,7 +756,7 @@ function Shell({ user, navItems, children, onLogout, theme, toggleTheme }) {
           {navItems.map(item=>(
             <button key={item.id} className="slink" onClick={item.onClick}
               style={{display:"flex",alignItems:"center",gap:9,padding:"9px 11px",borderRadius:9,border:"none",background:item.active?"var(--accentbg)":"transparent",color:item.active?acl:"var(--muted)",fontSize:12.5,cursor:"pointer",textAlign:"left",width:"100%",borderLeft:item.active?`3px solid ${acl}`:"3px solid transparent",fontWeight:item.active?600:400,transition:"all 0.15s"}}>
-              <span className="sidebar-label" style={{fontSize:15,width:18,textAlign:"center"}}>{item.icon}</span>
+              <span style={{fontSize:16,width:20,textAlign:"center",flexShrink:0,color:"inherit"}}>{item.icon}</span>
               <span className="sidebar-label" style={{flex:1}}>{item.label}</span>
               {item.badge>0&&<span className="sidebar-label" style={{background:acl+"20",color:acl,borderRadius:99,padding:"1px 7px",fontSize:9,fontWeight:700}}>{item.badge}</span>}
             </button>
@@ -858,13 +894,14 @@ function AuditLog() {
   }, []);
 
   const ACTION_LABELS = {
-    LOGIN:           { label:"Login",           icon:"🔐", color:"#059669" },
-    LOGOUT:          { label:"Logout",          icon:"🚪", color:"#6d28d9" },
-    PATIENT_CREATED: { label:"Patient Added",   icon:"👤", color:"#7c3aed" },
-    PATIENT_EDITED:  { label:"Patient Edited",  icon:"✏️", color:"#0891b2" },
-    RECORD_UPLOADED: { label:"Record Uploaded", icon:"📎", color:"#0891b2" },
-    RECORD_DELETED:  { label:"Record Deleted",  icon:"🗑️", color:"#e84c3d" },
-    VISIT_LOGGED:    { label:"Visit Logged",    icon:"📝", color:"#d97706" },
+    LOGIN:           { label:"Login",            icon:"🔐", color:"#059669" },
+    LOGOUT:          { label:"Logout",           icon:"🚪", color:"#6d28d9" },
+    PATIENT_CREATED: { label:"Patient Added",    icon:"👤", color:"#7c3aed" },
+    PATIENT_EDITED:  { label:"Patient Edited",   icon:"✏️", color:"#0891b2" },
+    PATIENT_DELETED: { label:"Patient Deleted",  icon:"🗑️", color:"#e84c3d" },
+    RECORD_UPLOADED: { label:"Record Uploaded",  icon:"📎", color:"#0891b2" },
+    RECORD_DELETED:  { label:"Record Deleted",   icon:"🗑️", color:"#e84c3d" },
+    VISIT_LOGGED:    { label:"Visit Logged",     icon:"📝", color:"#d97706" },
   };
 
   const filtered = filter === "ALL" ? logs : logs.filter(l => l.action === filter);
@@ -976,16 +1013,18 @@ function ClinicHome({ user, myPts, onAdd, onSearch }) {
 // ══════════════════════════════════════════════════════════
 function SearchView({ store, onSelect, isMIS, clinicId, user }) {
   const [q,setQ]=useState(""); const [type,setType]=useState("phone"); const [res,setRes]=useState(null);
-  const [inlineLog,setInlineLog]=useState({}); const [logDone,setLogDone]=useState({});
+  const [inlineLog,setInlineLog]=useState({}); const [inlineBy,setInlineBy]=useState({}); const [logDone,setLogDone]=useState({});
   const run=()=>{
     if(!q.trim())return;
     const r=type==="phone"?store.searchPhone(q.trim()):type==="code"?store.searchCode(q.trim()):store.searchName(q.trim());
-    setRes(r);setInlineLog({});setLogDone({});
+    setRes(r);setInlineLog({});setInlineBy({});setLogDone({});
   };
   const submitLog=async(pid)=>{
-    const note=(inlineLog[pid]||"").trim();if(!note)return;
-    await store.addVisit(pid,{note,clinicId:store.patients.find(x=>x.id===pid)?.clinicId||clinicId},user);
-    setLogDone(x=>({...x,[pid]:true}));setInlineLog(x=>({...x,[pid]:""}));
+    const note=(inlineLog[pid]||"").trim();
+    const by=(inlineBy[pid]||"").trim();
+    if(!note||!by)return;
+    await store.addVisit(pid,{note,attendedBy:by,clinicId:store.patients.find(x=>x.id===pid)?.clinicId||clinicId},user);
+    setLogDone(x=>({...x,[pid]:true}));setInlineLog(x=>({...x,[pid]:""}));setInlineBy(x=>({...x,[pid]:""}));
   };
   return (
     <div>
@@ -1023,9 +1062,12 @@ function SearchView({ store, onSelect, isMIS, clinicId, user }) {
                     <div style={{borderTop:"1px solid var(--border)",padding:"10px 14px",background:"var(--card)"}}>
                       <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:0.8,textTransform:"uppercase",marginBottom:7}}>📝 Log Today's Visit</div>
                       {logDone[p.id]?(<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"7px 12px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged!</div>):(
-                        <div style={{display:"flex",gap:8}}>
-                          <textarea style={{...S.inp,flex:1,minHeight:42,resize:"vertical",fontSize:12}} placeholder="Note for this visit…" value={inlineLog[p.id]||""} onChange={e=>setInlineLog(x=>({...x,[p.id]:e.target.value}))}/>
-                          <button className="btn-p" onClick={()=>submitLog(p.id)} style={{...S.btn,alignSelf:"flex-end",fontSize:11,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Log</button>
+                        <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                          <input style={{...S.inp,fontSize:12}} placeholder="👨‍⚕️ Audiologist name (required)…" value={inlineBy[p.id]||""} onChange={e=>setInlineBy(x=>({...x,[p.id]:e.target.value}))}/>
+                          <div style={{display:"flex",gap:8}}>
+                            <textarea style={{...S.inp,flex:1,minHeight:42,resize:"vertical",fontSize:12}} placeholder="Visit note…" value={inlineLog[p.id]||""} onChange={e=>setInlineLog(x=>({...x,[p.id]:e.target.value}))}/>
+                            <button className="btn-p" onClick={()=>submitLog(p.id)} style={{...S.btn,alignSelf:"flex-end",fontSize:11,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Log</button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1044,9 +1086,9 @@ function SearchView({ store, onSelect, isMIS, clinicId, user }) {
 // ADD PATIENT
 // ══════════════════════════════════════════════════════════
 function AddPatient({ user, store, onDone, onCancel }) {
-  const [f,setF]=useState({name:"",phone:"",age:"",gender:"Male",address:"",bloodGroup:"",source:"",notes:""});
+  const [f,setF]=useState({name:"",phone:"",age:"",gender:"Male",address:"",source:"",notes:""});
   const [errs,setErrs]=useState({}); const [success,setSuccess]=useState(null); const [busy,setBusy]=useState(false);
-  const [dupPatient,setDupPatient]=useState(null); const [dupNote,setDupNote]=useState(""); const [dupLogDone,setDupLogDone]=useState(false);
+  const [dupPatient,setDupPatient]=useState(null); const [dupNote,setDupNote]=useState(""); const [dupBy,setDupBy]=useState(""); const [dupLogDone,setDupLogDone]=useState(false);
   const set=(k,v)=>{setF(x=>({...x,[k]:v}));if(k==="phone")setDupPatient(null);};
   const validate=()=>{const e={};if(!f.name.trim())e.name="Required";if(!/^\d{10}$/.test(f.phone))e.phone="Must be 10 digits";if(!f.age||isNaN(f.age))e.age="Required";return e;};
   const acl="#7c3aed";
@@ -1087,10 +1129,13 @@ function AddPatient({ user, store, onDone, onCancel }) {
               <div style={{fontWeight:700,fontSize:13,color:"var(--text1)",marginBottom:4}}>{dupPatient.name}</div>
               <div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>📱 {dupPatient.phone} · <Cb code={dupPatient.id} color="#7c3aed"/> · {dupPatient.records?.length||0} records · {dupPatient.visits?.length||0} visits</div>
               {!dupLogDone?(
-                <div style={{display:"flex",gap:8}}>
-                  <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
-                  <button className="btn-p" onClick={async()=>{if(!dupNote.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,clinicId:user.clinic},user);setDupNote("");setDupLogDone(true);}}
-                    style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log</button>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <input style={{...S.inp,fontSize:12}} placeholder="👨‍⚕️ Audiologist name (required)…" value={dupBy} onChange={e=>setDupBy(e.target.value)}/>
+                  <div style={{display:"flex",gap:8}}>
+                    <textarea style={{...S.inp,flex:1,minHeight:52,resize:"vertical",fontSize:12}} placeholder="Log today's visit note…" value={dupNote} onChange={e=>setDupNote(e.target.value)}/>
+                    <button className="btn-p" onClick={async()=>{if(!dupNote.trim()||!dupBy.trim())return;await store.addVisit(dupPatient.id,{note:dupNote,attendedBy:dupBy.trim(),clinicId:user.clinic},user);setDupNote("");setDupBy("");setDupLogDone(true);}}
+                      style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12,padding:"9px 16px"}}>+ Log</button>
+                  </div>
                 </div>
               ):(<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"9px 13px",fontSize:12,color:"#15803d",fontWeight:600}}>✅ Visit logged!</div>)}
             </div>
@@ -1111,13 +1156,6 @@ function AddPatient({ user, store, onDone, onCancel }) {
             <div style={{marginBottom:16}}>
               <label style={S.label}>Gender</label>
               <select style={S.inp} value={f.gender} onChange={e=>set("gender",e.target.value)}><option>Male</option><option>Female</option><option>Other</option></select>
-            </div>
-            <div style={{marginBottom:16}}>
-              <label style={S.label}>Blood Group</label>
-              <select style={S.inp} value={f.bloodGroup} onChange={e=>set("bloodGroup",e.target.value)}>
-                <option value="">Select…</option>
-                {["A+","A-","B+","B-","O+","O-","AB+","AB-"].map(g=><option key={g}>{g}</option>)}
-              </select>
             </div>
             <div style={{marginBottom:16,gridColumn:"1/-1"}}>
               <label style={S.label}>📣 How did the patient hear about us?</label>
@@ -1291,6 +1329,8 @@ function Analytics({ store }) {
 function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, user }) {
   const [tab,setTab]=useState("info");
   const [note,setNote]=useState("");
+  const [attendedBy,setAttendedBy]=useState("");
+  const [confirmDelete,setConfirmDelete]=useState(false);
   const fileRef=useRef();
   const [busy,setBusy]=useState(false);
   const [editF,setEditF]=useState({});
@@ -1302,7 +1342,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
   const acl="#7c3aed";
 
   const startEdit = () => {
-    setEditF({ name:live.name, phone:live.phone, age:live.age, gender:live.gender||"Male", address:live.address||"", bloodGroup:live.bloodGroup||"", source:live.source||"", notes:live.notes||"" });
+    setEditF({ name:live.name, phone:live.phone, age:live.age, gender:live.gender||"Male", address:live.address||"", source:live.source||"", notes:live.notes||"" });
   };
 
   const saveEdit = async () => {
@@ -1337,13 +1377,24 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
               <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                 <Cb code={live.id} color={acl}/>
                 <span style={{background:acl+"18",color:acl,padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>{c?.label} · {c?.city}</span>
-                {live.bloodGroup&&<span style={{background:"#fee2e2",color:"#dc2626",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>🩸 {live.bloodGroup}</span>}
                 {live.source&&<span style={{background:"#ede9fe",color:"#7c3aed",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>📣 {live.source}</span>}
                 {editDone&&<span style={{background:"#f0fdf4",color:"#15803d",padding:"2px 7px",borderRadius:5,fontSize:10,fontWeight:600}}>✅ Saved!</span>}
               </div>
             </div>
           </div>
-          <button onClick={onClose} style={{background:"var(--bg)",border:"1px solid var(--border)",borderRadius:8,width:32,height:32,fontSize:14,cursor:"pointer",color:"var(--muted)",flexShrink:0}}>✕</button>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {user?.role==="mis"&&!confirmDelete&&(
+              <button onClick={()=>setConfirmDelete(true)} style={{padding:"6px 12px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,color:"#dc2626",fontSize:11,cursor:"pointer",fontWeight:600}}>🗑 Delete Patient</button>
+            )}
+            {user?.role==="mis"&&confirmDelete&&(
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#dc2626",fontWeight:600}}>Sure? This is permanent!</span>
+                <button onClick={async()=>{await store.deletePatient(live.id,user);onClose();}} style={{padding:"5px 11px",background:"#dc2626",border:"none",borderRadius:7,color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700}}>Yes, Delete</button>
+                <button onClick={()=>setConfirmDelete(false)} style={{padding:"5px 10px",background:"transparent",border:"1px solid var(--border)",borderRadius:7,color:"var(--muted)",fontSize:11,cursor:"pointer"}}>Cancel</button>
+              </div>
+            )}
+            <button onClick={onClose} style={{background:"var(--bg)",border:"1px solid var(--border)",borderRadius:8,width:32,height:32,fontSize:14,cursor:"pointer",color:"var(--muted)",flexShrink:0}}>✕</button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -1361,7 +1412,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
           {/* INFO TAB */}
           {tab==="info"&&(
             <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {[["Full Name",live.name],["Mobile",live.phone],["Age",live.age?`${live.age} yrs`:"—"],["Gender",live.gender||"—"],["Blood Group",live.bloodGroup||"—"],["Address",live.address||"—"],["Clinic",c?.label],["City",c?.city],["Case Code",live.id],["Registered",new Date(live.createdAt).toLocaleDateString("en-IN")]].map(([k,v])=>(
+              {[["Full Name",live.name],["Mobile",live.phone],["Age",live.age?`${live.age} yrs`:"—"],["Gender",live.gender||"—"],["Address",live.address||"—"],["Clinic",c?.label],["City",c?.city],["Case Code",live.id],["Registered",new Date(live.createdAt).toLocaleDateString("en-IN")]].map(([k,v])=>(
                 <div key={k} style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:9,padding:"10px 14px"}}>
                   <div style={{fontSize:9,color:"var(--muted2)",fontWeight:700,letterSpacing:1.2,textTransform:"uppercase"}}>{k}</div>
                   <div style={{fontSize:13,fontWeight:600,color:"var(--text1)",marginTop:4}}>{v||"—"}</div>
@@ -1400,13 +1451,6 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
                     <label style={S.label}>Gender</label>
                     <select style={S.inp} value={editF.gender||"Male"} onChange={e=>setEditF(f=>({...f,gender:e.target.value}))}>
                       <option>Male</option><option>Female</option><option>Other</option>
-                    </select>
-                  </div>
-                  <div style={{marginBottom:14}}>
-                    <label style={S.label}>Blood Group</label>
-                    <select style={S.inp} value={editF.bloodGroup||""} onChange={e=>setEditF(f=>({...f,bloodGroup:e.target.value}))}>
-                      <option value="">Select…</option>
-                      {["A+","A-","B+","B-","O+","O-","AB+","AB-"].map(g=><option key={g}>{g}</option>)}
                     </select>
                   </div>
                   <div style={{marginBottom:14,gridColumn:"1/-1"}}>
@@ -1462,9 +1506,17 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
           {tab==="visits"&&(
             <div>
               {!readOnly&&(
-                <div style={{display:"flex",gap:8,marginBottom:14}}>
-                  <textarea style={{...S.inp,flex:1,minHeight:54,resize:"vertical"}} placeholder="Log visit note…" value={note} onChange={e=>setNote(e.target.value)}/>
-                  <button className="btn-p" onClick={async()=>{if(!note.trim())return;await store.addVisit(live.id,{note,clinicId:currentClinicId||live.clinicId},user);setNote("");}} style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap"}}>+ Log</button>
+                <div style={{background:"var(--card)",border:"1px solid var(--cardborder)",borderRadius:11,padding:"14px",marginBottom:14,boxShadow:"var(--cardshadow)"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:0.8,textTransform:"uppercase",marginBottom:10}}>📝 Log Today's Visit</div>
+                  <div style={{marginBottom:10}}>
+                    <label style={S.label}>👨‍⚕️ Attended By (Audiologist Name) *</label>
+                    <input style={S.inp} placeholder="e.g. Dr. Priya Shah" value={attendedBy} onChange={e=>setAttendedBy(e.target.value)}/>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <textarea style={{...S.inp,flex:1,minHeight:54,resize:"vertical"}} placeholder="Visit note / observations…" value={note} onChange={e=>setNote(e.target.value)}/>
+                    <button className="btn-p" onClick={async()=>{if(!note.trim()||!attendedBy.trim())return;await store.addVisit(live.id,{note,attendedBy:attendedBy.trim(),clinicId:currentClinicId||live.clinicId},user);setNote("");setAttendedBy("");}} style={{...S.btn,alignSelf:"flex-end",whiteSpace:"nowrap",fontSize:12}}>+ Log Visit</button>
+                  </div>
+                  {(!note.trim()||!attendedBy.trim())&&<div style={{fontSize:10,color:"var(--muted2)",marginTop:6}}>⚠️ Both audiologist name and visit note are required.</div>}
                 </div>
               )}
               {(!live.visits||live.visits.length===0)&&<Empty msg="No visit logs yet"/>}
@@ -1474,6 +1526,7 @@ function PatientModal({ p, store, onClose, readOnly, setLb, currentClinicId, use
                     <div style={{fontSize:9,color:"var(--muted2)"}}>{new Date(v.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
                     {v.clinicId&&CLINICS[v.clinicId]&&(<div style={{background:CLINICS[v.clinicId].color+"18",color:CLINICS[v.clinicId].color,padding:"2px 8px",borderRadius:5,fontSize:9,fontWeight:700}}>🏥 {CLINICS[v.clinicId].label} · {CLINICS[v.clinicId].city}</div>)}
                   </div>
+                  {v.attendedBy&&<div style={{fontSize:11,fontWeight:700,color:"var(--accent)",marginBottom:4}}>👨‍⚕️ {v.attendedBy}</div>}
                   <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>{v.note}</div>
                 </div>
               ))}
